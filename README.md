@@ -3,7 +3,7 @@
 [![build](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml/badge.svg)](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话里执行，看板实时折叠进度，执行完把结论收回来。
+DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话里执行，看板实时折叠进度，执行完把结论收回来；也可以按计划自动重复执行。
 
 ## 功能
 
@@ -19,42 +19,11 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 
 要求 DSH `>=0.2.1-rc.5 <0.3.0`、Node `>=20`。仓库里已经带好构建产物 `dist/client.js`，安装时不需要构建。
 
-### 从 GitHub 安装
+- **从 npm**：插件页安装外部 bundle，填包名 `dsh-color-task-board`
+- **从 GitHub**：填 `github:shlan28/dsh-task-board` 或仓库地址
+- **本地开发**：安装本目录的绝对路径（profile 里以 `link:` 依赖指向它）
 
-在 DSH 的「插件」页安装外部 bundle，填入 pnpm spec：
-
-```
-github:shlan28/dsh-task-board
-```
-
-用完整地址也可以：
-
-```
-https://github.com/shlan28/dsh-task-board
-```
-
-也可以直接让 agent 执行 `plugin_manager` 的 `install_bundle`，`target` 填上面的 spec。
-
-### 从 npm 安装
-
-已发布到 npm，`target` 填包名即可：
-
-```
-dsh-color-task-board
-```
-
-> 名字的由来：最初的 `dsh-task-board` 与已有的 `dsh-taskboard` 过于相似，npm 会以 403 拒绝发布，所以加上 `color` 区分。
-
-### 本地开发安装
-
-```bash
-git clone https://github.com/shlan28/dsh-task-board.git
-cd dsh-task-board
-npm install
-node scripts/build.mjs
-```
-
-然后在「插件」页安装这个目录的**绝对路径**（或者 `plugin_manager` 的 `install_bundle`，`target` 填目录）。
+安装、更新、卸载与数据位置的完整说明见 [docs/deploy.md](docs/deploy.md)。
 
 ## 使用
 
@@ -72,48 +41,25 @@ node scripts/build.mjs
 
 自动化规则交给 DSH 自带的定时任务服务保存（`$DSH_HOME/storages/schedule.json`），卡片里只存任务 id、规则和预留会话。所以这张卡也会出现在 Harness 的「自动化任务」页面里；在那边停用或删除，看板卡片会显示为已暂停 / 没有后续执行。
 
-## 实现
-
-| 路径 | 作用 |
-|---|---|
-| `src/host.js` | Host 半片：`/task-board/*` 接口、会话派发、定时任务对接、`task_board` 工具、提示词段落 |
-| `src/board.js` | 看板数据层：任务折叠、进度与结果、自动化配置、持久化 |
-| `client/` | 浏览器半片：侧栏入口、看板面板、弹窗、拖拽、样式 |
-| `dist/client.js` | 构建产物，安装时直接使用 |
-| `cordis.patch.yml` | bundle patch，插入 `task-board` 这一行 |
-| `locale/` | 插件在插件管理页里的标题与描述 |
-
 ## 开发
 
 ```bash
-npm install          # 只在构建时需要 esbuild
+npm install              # 只在构建时需要 esbuild
 node scripts/build.mjs   # 产出 dist/client.js
-npm run watch        # 监听 client/
+npm run watch            # 监听 client/
 ```
 
 - 只改 `client/`：重新构建后刷新页面。
 - 改 `src/`（Host 半片）：需要先移除 bundle 再安装一次，Harness 才会加载新的 Host 代码。
 - CI 会校验提交的 `dist/client.js` 与 `client/` 源码一致，改完记得一起提交。
 
-## 发布新版本
+## 文档
 
-```bash
-node scripts/build.mjs                     # 改了 client/ 就重新构建，dist/client.js 要一起提交
-git add -A && git commit -m "feat: ..."
-npm version patch -m "chore: release %s"    # 版本号 +1 并打 tag
-npm publish                                # prepublishOnly 会再构建一次，无需 --otp / --access
-git push --follow-tags
-```
-
-- 版本号必须递增，registry 不接受重复版本；`npm view dsh-color-task-board version` 可校验发布结果。
-- 发布用的是带 **Bypass 2FA** 的 granular token（放在 `~/.npmrc` 的 `//registry.npmjs.org/:_authToken`），所以不用输入 OTP。
-- 这类 token 不能做账号级操作（删包、改 2FA 等），那些只能在网页上用安全密钥完成。
-- CI 会校验 `dist/client.js` 与 `client/` 一致：改完客户端记得把重建结果一起提交。
-
-### 更新本机已装的插件
-
-- 开发模式（profile 里是 `link:` 到本目录）：改 `client/` → 重新构建后刷新页面；改 `src/`（host 半片）→ 在插件页卸载再安装一次，Host 才会加载新代码。
-- 从 npm 安装的：插件页卸载 `dsh-color-task-board`，再安装 `dsh-color-task-board@<新版本>`。
+- [docs/index.md](docs/index.md) — 文档索引与项目结构
+- [docs/deploy.md](docs/deploy.md) — 部署与更新
+- [docs/release.md](docs/release.md) — 发布新版本
+- [docs/architecture.md](docs/architecture.md) — 实现说明
+- [docs/plans/](docs/plans/) — 方案与计划
 
 ## License
 
