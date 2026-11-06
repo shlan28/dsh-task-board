@@ -95,6 +95,26 @@ npm run watch        # 监听 client/
 - 改 `src/`（Host 半片）：需要先移除 bundle 再安装一次，Harness 才会加载新的 Host 代码。
 - CI 会校验提交的 `dist/client.js` 与 `client/` 源码一致，改完记得一起提交。
 
+## 发布新版本
+
+```bash
+node scripts/build.mjs                     # 改了 client/ 就重新构建，dist/client.js 要一起提交
+git add -A && git commit -m "feat: ..."
+npm version patch -m "chore: release %s"    # 版本号 +1 并打 tag
+npm publish                                # prepublishOnly 会再构建一次，无需 --otp / --access
+git push --follow-tags
+```
+
+- 版本号必须递增，registry 不接受重复版本；`npm view dsh-color-task-board version` 可校验发布结果。
+- 发布用的是带 **Bypass 2FA** 的 granular token（放在 `~/.npmrc` 的 `//registry.npmjs.org/:_authToken`），所以不用输入 OTP。
+- 这类 token 不能做账号级操作（删包、改 2FA 等），那些只能在网页上用安全密钥完成。
+- CI 会校验 `dist/client.js` 与 `client/` 一致：改完客户端记得把重建结果一起提交。
+
+### 更新本机已装的插件
+
+- 开发模式（profile 里是 `link:` 到本目录）：改 `client/` → 重新构建后刷新页面；改 `src/`（host 半片）→ 在插件页卸载再安装一次，Host 才会加载新代码。
+- 从 npm 安装的：插件页卸载 `dsh-color-task-board`，再安装 `dsh-color-task-board@<新版本>`。
+
 ## License
 
 [MIT](LICENSE)
