@@ -1,0 +1,20 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  client-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: node scripts/build.mjs
+      - name: dist/client.js is up to date
+        run: git diff --exit-code -- dist/client.js
+      - run: node --check dist/client.js
