@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Task board",
+    "description": "A kanban board in the sidebar that dispatches tasks to their own sessions, then tracks progress and collects the results."
+  }
+}
