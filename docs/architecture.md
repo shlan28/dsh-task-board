@@ -19,6 +19,7 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 2. 把卡片写成提示词（`buildPrompt`）塞进会话；
 3. 宿主 `session/event` 把 `turn/start`、`tool/call`、`assistant/message`、`turn/end` 折算成进度、阶段与结果；
 4. `turn/end` 且正常完成 → 进「待验收」，最后一次助手文本存为「最新结果」。
+5. 验收（`accept`）：普通卡进「已完成」；**自动化卡回到「待办」**（周期任务没有终态），进度归零，定时规则与上一轮结果都保留。
 
 ## 自动化投递链路
 
@@ -27,6 +28,7 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 - 看板监听 `session/event`：来自预留会话的 `turn/start` 说明这一轮自动执行开始，卡片接管会话（写入 `taskId.sessionId`）、切到「进行中」并记录 `lastFiredAt`，后续进度照常折叠；上一轮结束后再来的 `turn/start` 视为新一次执行，进度重置。
 - 「下次执行」来自 `schedule.catalog()`，本地缓存 1.5 秒，`schedule/changed` 时失效；状态变化通过 `schedulesRevision` 通知客户端刷新。
 - 暂停/启用/改规则走 `schedule.edit`，取消自动化走 `schedule.edit` 删除任务；删卡会级联删除对应定时任务。
+- 「已完成」对自动化卡是**停表**而不是终点：手动拖进「已完成」会暂停对应定时任务，拖出时自动恢复（`syncAutomationByColumn`）。否则下一轮到点会把卡从「已完成」拽回「进行中」，跑完落到「待验收」，看起来像自己复活。
 
 ## 数据与持久化
 

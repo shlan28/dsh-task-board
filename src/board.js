@@ -232,16 +232,26 @@ export class Board {
     return true
   }
 
+  /**
+   * 验收一轮结果。
+   * 自动化卡是周期任务，没有「已完成」这个终态：验收只代表这一轮看过了，
+   * 于是回到待办等待下一轮；普通卡仍按原行为进入已完成。
+   */
   accept(id) {
     const task = this.find(id)
     if (!task) return null
-    task.column = 'done'
     task.running = false
-    task.progress = 100
-    task.phase = 'idle'
-    task.toolName = ''
-    task.finishedAt = this.now()
     task.updatedAt = this.now()
+    if (task.automation) {
+      this.applyColumn(task, 'todo')
+      task.result = task.result || ''
+    } else {
+      task.column = 'done'
+      task.progress = 100
+      task.phase = 'idle'
+      task.toolName = ''
+      task.finishedAt = this.now()
+    }
     this.touch()
     return task
   }

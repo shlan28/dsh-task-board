@@ -25,7 +25,7 @@ cordis.patch.yml bundle patch，插入 task-board 这一行
 | [deploy.md](deploy.md) | 部署：安装方式、安装后验证、更新、卸载、数据位置、兼容性 |
 | [release.md](release.md) | 发布：版本号、npm publish、tag、发布后校验 |
 | [architecture.md](architecture.md) | 实现：host/client 分工、数据流、自动化投递链路 |
-| [plans/](plans/) | 方案与计划文档 |
+| [plans/](plans/) | 方案与计划文档；[2026-11-automation-accept-flow.md](plans/2026-11-automation-accept-flow.md) — 自动化卡的验收流程 |
 
 ## 维护约定
 

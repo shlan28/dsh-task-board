@@ -716,12 +716,12 @@ function DetailSheet({ task, t }) {
                 onClick: async () => {
                   const result = await actions.accept(task.id)
                   if (result) {
-                    notify(t('Card accepted'))
+                    notify(t(task.automation ? 'Accepted, back to todo' : 'Card accepted'))
                     closeDetail()
                   }
                 },
               },
-              t('Accept'),
+              t(task.automation ? 'Accept this run' : 'Accept'),
             )
           : null,
       ),

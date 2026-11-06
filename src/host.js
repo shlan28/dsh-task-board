@@ -391,6 +391,21 @@ export function apply(ctx) {
     return {}
   }
 
+  /**
+   * 自动化卡进入已完成时暂停定时，离开已完成时恢复。
+   * 「已完成」对周期任务只能是停表，否则下一轮到点会把卡片从已完成拽回进行中。
+   */
+  async function syncAutomationByColumn(task) {
+    const automation = task?.automation
+    if (!automation?.scheduleId) return ''
+    const shouldRun = task.column !== 'done'
+    if ((automation.active !== false) === shouldRun) return ''
+    const result = await editSchedule(automation.scheduleId, { active: shouldRun })
+    if (!result.ok) return `自动化没有${shouldRun ? '恢复' : '暂停'}：${result.error}`
+    board.setAutomation(task.id, { ...automation, active: shouldRun })
+    return ''
+  }
+
   /** 立即执行一张卡：自动化卡走定时任务投递，普通卡走会话派发。 */
   async function runNow(task) {
     if (!task) return { ok: false, error: '任务不存在' }
@@ -513,8 +528,9 @@ export function apply(ctx) {
       case 'move': {
         const task = board.move(id, body?.column)
         if (!task) return fail('任务不存在或状态无效')
+        const warning = await syncAutomationByColumn(task)
         await board.flushNow()
-        return { ...done(task), state: await snapshot() }
+        return { ...done(task), ...(warning ? { warning } : {}), state: await snapshot() }
       }
       case 'remove': {
         const task = board.find(id)
