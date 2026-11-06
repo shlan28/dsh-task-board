@@ -8,6 +8,7 @@ let snapshot = {
   tasks: [],
   columns: COLUMNS,
   revision: -1,
+  stamp: '',
   loaded: false,
   error: null,
   filter: 'all',
@@ -57,11 +58,13 @@ export async function refresh() {
   try {
     const data = await request('/state')
     const revision = data?.revision ?? 0
-    if (snapshot.loaded && revision === snapshot.revision && !snapshot.error) return true
+    const stamp = `${revision}:${data?.schedulesRevision ?? ''}`
+    if (snapshot.loaded && stamp === snapshot.stamp && !snapshot.error) return true
     setState({
       tasks: Array.isArray(data?.tasks) ? data.tasks : [],
       columns: Array.isArray(data?.columns) && data.columns.length ? data.columns : COLUMNS,
       revision,
+      stamp,
       loaded: true,
       error: null,
     })
@@ -77,9 +80,11 @@ export async function act(op, payload = {}) {
   try {
     const data = await request('/op', { method: 'POST', body: JSON.stringify({ op, ...payload }) })
     if (data?.state) {
+      const revision = data.state.revision ?? snapshot.revision
       setState({
         tasks: Array.isArray(data.state.tasks) ? data.state.tasks : snapshot.tasks,
-        revision: data.state.revision ?? snapshot.revision,
+        revision,
+        stamp: `${revision}:${data.state.schedulesRevision ?? ''}`,
         loaded: true,
         error: null,
       })

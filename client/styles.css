@@ -501,3 +501,75 @@
 @media (prefers-reduced-motion: reduce) {
   .tb-root *, .tb-root *::before, .tb-root *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* 自动化：卡上的定时徽标、新建与详情里的规则编辑器 */
+.tb-chip.is-time {
+  background: color-mix(in srgb, var(--tb-brand) 14%, var(--tb-surface));
+  color: color-mix(in srgb, var(--tb-brand) 72%, var(--tb-ink));
+  font-weight: 600;
+}
+.tb-chip.is-muted { opacity: .55; }
+.tb-auto-field { gap: 7px; }
+.tb-auto-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--tb-line);
+  background: color-mix(in srgb, var(--tb-surface) 55%, transparent);
+}
+.tb-auto-time { max-width: 148px; }
+.tb-weekdays { display: flex; flex-wrap: wrap; gap: 4px; }
+.tb-weekdays button {
+  min-width: 34px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: 8px;
+  border: 1px solid var(--tb-line);
+  color: var(--tb-ink2);
+  font-size: 11px;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.tb-weekdays button.is-on {
+  border-color: color-mix(in srgb, var(--tb-brand) 42%, transparent);
+  background: color-mix(in srgb, var(--tb-brand) 13%, transparent);
+  color: var(--tb-ink);
+}
+.tb-hint { font-size: 10.5px; line-height: 16px; color: var(--tb-ink2); opacity: .85; }
+.tb-auto-block { display: flex; flex-direction: column; gap: 9px; }
+.tb-auto-head { display: flex; align-items: center; gap: 8px; }
+.tb-auto-head h4 { margin-bottom: 0; }
+.tb-auto-state {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--tb-ink2) 12%, transparent);
+  color: var(--tb-ink2);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .02em;
+}
+.tb-auto-state.is-live {
+  background: color-mix(in srgb, #74cbaa 20%, transparent);
+  color: color-mix(in srgb, #3f9c7c 82%, var(--tb-ink));
+}
+.tb-auto-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 18px;
+  color: var(--tb-ink);
+}
+.tb-auto-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 17px;
+}
+.tb-auto-meta dt { color: var(--tb-ink2); }
+.tb-auto-meta dd { margin: 0; color: var(--tb-ink); }
+.tb-auto-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.tb-auto-actions .tb-btn { height: 30px; padding: 0 11px; font-size: 11.5px; }

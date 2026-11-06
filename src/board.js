@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 
 export const COLUMNS = ['todo', 'doing', 'review', 'done']
 export const COLUMN_SET = new Set(COLUMNS)
+export const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
+const WEEKDAY_SET = new Set(WEEKDAYS)
+const AUTOMATION_FREQUENCIES = new Set(['hourly', 'daily', 'weekly', 'custom'])
 const FILE_VERSION = 1
 
 const clampProgress = (value) => {
@@ -14,6 +17,43 @@ const clampProgress = (value) => {
 }
 
 const text = (value, max) => (typeof value === 'string' ? value.trim().slice(0, max) : '')
+
+/** `HH:MM`，非法值回空串。 */
+export function normalizeClock(value) {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(typeof value === 'string' ? value.trim() : '')
+  return match ? `${match[1]}:${match[2]}` : ''
+}
+
+function normalizeWeekdays(value) {
+  if (!Array.isArray(value)) return []
+  const days = []
+  for (const entry of value) {
+    const name = typeof entry === 'string' ? entry.trim().toUpperCase() : ''
+    if (!WEEKDAY_SET.has(name) || days.includes(name)) continue
+    days.push(name)
+  }
+  return days
+}
+
+/** 卡片上的自动化配置：重复规则、时区、绑定的定时任务与会话。 */
+export function normalizeAutomation(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const scheduleId = typeof raw.scheduleId === 'string' ? raw.scheduleId.trim() : ''
+  const rrule = text(raw.rrule, 2000)
+  if (!scheduleId && !rrule) return null
+  return {
+    scheduleId,
+    rrule,
+    frequency: AUTOMATION_FREQUENCIES.has(raw.frequency) ? raw.frequency : 'custom',
+    time: normalizeClock(raw.time) || '09:00',
+    weekdays: normalizeWeekdays(raw.weekdays),
+    timeZone: text(raw.timeZone, 64),
+    active: raw.active !== false,
+    reservedSessionId: typeof raw.reservedSessionId === 'string' && raw.reservedSessionId ? raw.reservedSessionId : null,
+    lastFiredAt: Number(raw.lastFiredAt) || null,
+    error: text(raw.error, 500),
+  }
+}
 
 let counter = 0
 export function newId(prefix = 't') {
@@ -47,6 +87,7 @@ function normalizeTask(raw) {
     sessionId: typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null,
     source: raw?.source === 'session' ? 'session' : 'board',
     createdBy: typeof raw?.createdBy === 'string' ? raw.createdBy : null,
+    automation: normalizeAutomation(raw?.automation),
     result: text(raw?.result, 8000),
     error: text(raw?.error, 2000),
     createdAt: Number(raw?.createdAt) || Date.now(),
@@ -88,7 +129,10 @@ export class Board {
 
   list() {
     return {
-      tasks: this.tasks.map(task => ({ ...task })),
+      tasks: this.tasks.map(task => ({
+        ...task,
+        automation: task.automation ? { ...task.automation, weekdays: [...task.automation.weekdays] } : null,
+      })),
       revision: this.revision,
       columns: [...COLUMNS],
       now: this.now(),
@@ -133,6 +177,26 @@ export class Board {
     task.updatedAt = this.now()
     this.touch()
     return task
+  }
+
+  /** 写入或清除一张卡的自动化配置。 */
+  setAutomation(id, automation) {
+    const task = this.find(id)
+    if (!task) return null
+    task.automation = normalizeAutomation(automation)
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  /** 记录自动化投递的会话与触发时间；卡片转为进行中。 */
+  bindAutomationRun(task, sessionId) {
+    if (!task) return null
+    if (task.automation) {
+      task.automation.reservedSessionId = sessionId
+      task.automation.lastFiredAt = this.now()
+    }
+    return this.markDispatched(task.id, sessionId)
   }
 
   move(id, column) {
@@ -195,7 +259,7 @@ export class Board {
     task.sessionId = sessionId
     task.running = true
     task.column = 'doing'
-    task.progress = Math.max(task.progress, 6)
+    task.progress = 6
     task.phase = 'queued'
     task.toolName = ''
     task.steps = 0
@@ -221,11 +285,29 @@ export class Board {
     return task
   }
 
-  /** 折叠一条会话事件到对应的运行中任务。 */
+  /** 折叠一条会话事件到对应的任务；自动化投递会在这里接管卡片。 */
   applyEvent(sessionId, event) {
-    const affected = this.tasks.filter(task => task.sessionId === sessionId && (task.running === true || task.phase === 'queued'))
+    const candidates = this.tasks.filter(
+      task => task.sessionId === sessionId || task.automation?.reservedSessionId === sessionId,
+    )
+    if (!candidates.length) return []
+    const affected = []
+    for (const task of candidates) {
+      if (task.sessionId !== sessionId) {
+        // 自动化预留的会话还没被用过：等这一轮真正开始再接管。
+        if (event?.type !== 'turn/start') continue
+        task.sessionId = sessionId
+      }
+      if (!task.running && task.phase !== 'queued') {
+        // 上一轮已经结束：这次 turn/start 是一次新的自动执行。
+        if (event?.type !== 'turn/start') continue
+        if (task.automation) this.bindAutomationRun(task, sessionId)
+        else this.markDispatched(task.id, sessionId)
+      }
+      this.fold(task, event)
+      affected.push(task)
+    }
     if (!affected.length) return []
-    for (const task of affected) this.fold(task, event)
     this.touch()
     return affected
   }
