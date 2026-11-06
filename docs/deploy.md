@@ -20,6 +20,12 @@ dsh-color-task-board
 
 指定版本：`dsh-color-task-board@0.1.4`。
 
+用 `dsh` CLI 安装到某个 profile：
+
+```bash
+dsh plugin --profile desktop add dsh-color-task-board
+```
+
 ### 2. 从 GitHub 安装
 
 填入 pnpm spec，二选一：

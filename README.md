@@ -1,5 +1,6 @@
 # dsh-task-board
 
+[![npm](https://img.shields.io/npm/v/dsh-color-task-board.svg)](https://www.npmjs.com/package/dsh-color-task-board)
 [![build](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml/badge.svg)](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -19,9 +20,42 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 
 要求 DSH `>=0.2.1-rc.5 <0.3.0`、Node `>=20`。仓库里已经带好构建产物 `dist/client.js`，安装时不需要构建。
 
-- **从 npm**：插件页安装外部 bundle，填包名 `dsh-color-task-board`
-- **从 GitHub**：填 `github:shlan28/dsh-task-board` 或仓库地址
-- **本地开发**：安装本目录的绝对路径（profile 里以 `link:` 依赖指向它）
+### 从 npm 安装（推荐）
+
+包名：**`dsh-color-task-board`** · [npm 页面](https://www.npmjs.com/package/dsh-color-task-board)
+
+在 DSH 的「插件」页安装外部 bundle，把包名填进去：
+
+```text
+dsh-color-task-board
+```
+
+需要固定版本时写成 `dsh-color-task-board@0.1.4`。也可以用 `dsh` CLI 安装到某个 profile：
+
+```bash
+dsh plugin --profile desktop add dsh-color-task-board
+```
+
+### 从 GitHub 安装
+
+在插件页填 pnpm spec：
+
+```text
+github:shlan28/dsh-task-board
+```
+
+或者用完整仓库地址 `https://github.com/shlan28/dsh-task-board`。
+
+### 本地开发安装
+
+安装本目录的**绝对路径**，profile 里会以 `link:` 依赖指向它，改代码不用重新发布：
+
+```bash
+git clone https://github.com/shlan28/dsh-task-board.git
+cd dsh-task-board
+npm install
+node scripts/build.mjs
+```
 
 安装、更新、卸载与数据位置的完整说明见 [docs/deploy.md](docs/deploy.md)。
 
