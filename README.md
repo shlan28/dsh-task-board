@@ -37,11 +37,13 @@ https://github.com/shlan28/dsh-task-board
 
 ### 从 npm 安装
 
-发布到 npm 之后，`target` 填包名即可：
+已发布为 scoped 公开包，`target` 填包名即可：
 
 ```
-dsh-task-board
+@shlan28/dsh-task-board
 ```
+
+> 为什么带 scope：无 scope 的 `dsh-task-board` 与已有的 `dsh-taskboard` 名字过于相似，npm 会以 403 拒绝发布，所以改发到 `@shlan28` 这个 scope 下。
 
 ### 本地开发安装
 
