@@ -17,6 +17,9 @@ let snapshot = {
   detailId: null,
   toast: null,
   dragging: null,
+  workspaces: [],
+  defaultWorkspacePath: '',
+  workspacesRevision: '',
 }
 
 const listeners = new Set()
@@ -58,11 +61,14 @@ export async function refresh() {
   try {
     const data = await request('/state')
     const revision = data?.revision ?? 0
-    const stamp = `${revision}:${data?.schedulesRevision ?? ''}`
+    const stamp = `${revision}:${data?.schedulesRevision ?? ''}:${data?.workspacesRevision ?? ''}`
     if (snapshot.loaded && stamp === snapshot.stamp && !snapshot.error) return true
     setState({
       tasks: Array.isArray(data?.tasks) ? data.tasks : [],
       columns: Array.isArray(data?.columns) && data.columns.length ? data.columns : COLUMNS,
+      workspaces: Array.isArray(data?.workspaces) ? data.workspaces : [],
+      defaultWorkspacePath: typeof data?.defaultWorkspacePath === 'string' ? data.defaultWorkspacePath : '',
+      workspacesRevision: typeof data?.workspacesRevision === 'string' ? data.workspacesRevision : '',
       revision,
       stamp,
       loaded: true,
@@ -83,8 +89,13 @@ export async function act(op, payload = {}) {
       const revision = data.state.revision ?? snapshot.revision
       setState({
         tasks: Array.isArray(data.state.tasks) ? data.state.tasks : snapshot.tasks,
+        workspaces: Array.isArray(data.state.workspaces) ? data.state.workspaces : snapshot.workspaces,
+        defaultWorkspacePath:
+          typeof data.state.defaultWorkspacePath === 'string' ? data.state.defaultWorkspacePath : snapshot.defaultWorkspacePath,
+        workspacesRevision:
+          typeof data.state.workspacesRevision === 'string' ? data.state.workspacesRevision : snapshot.workspacesRevision,
         revision,
-        stamp: `${revision}:${data.state.schedulesRevision ?? ''}`,
+        stamp: `${revision}:${data.state.schedulesRevision ?? ''}:${data.state.workspacesRevision ?? ''}`,
         loaded: true,
         error: null,
       })

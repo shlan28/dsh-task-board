@@ -44,6 +44,7 @@ export function normalizeAutomation(raw) {
   return {
     scheduleId,
     rrule,
+    targetPath: text(raw.targetPath, 1024),
     frequency: AUTOMATION_FREQUENCIES.has(raw.frequency) ? raw.frequency : 'custom',
     time: normalizeClock(raw.time) || '09:00',
     weekdays: normalizeWeekdays(raw.weekdays),
@@ -85,6 +86,9 @@ function normalizeTask(raw) {
     toolName: typeof raw?.toolName === 'string' ? raw.toolName : '',
     steps: Number.isFinite(raw?.steps) ? Math.max(0, Number(raw.steps)) : 0,
     sessionId: typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null,
+    workspaceId: text(raw?.workspaceId, 120) || null,
+    workspacePath: text(raw?.workspacePath, 1024) || null,
+    workspaceTitle: text(raw?.workspaceTitle, 200) || null,
     source: raw?.source === 'session' ? 'session' : 'board',
     createdBy: typeof raw?.createdBy === 'string' ? raw.createdBy : null,
     automation: normalizeAutomation(raw?.automation),
@@ -155,6 +159,9 @@ export class Board {
       note: input?.note,
       tag: input?.tag,
       column: input?.column,
+      workspaceId: input?.workspaceId,
+      workspacePath: input?.workspacePath,
+      workspaceTitle: input?.workspaceTitle,
       order,
       source: meta.source === 'session' ? 'session' : 'board',
       createdBy: meta.createdBy ?? null,
@@ -173,6 +180,10 @@ export class Board {
     if (patch.note !== undefined) task.note = text(patch.note, 4000)
     if (patch.tag !== undefined) task.tag = text(patch.tag, 24)
     if (patch.progress !== undefined) task.progress = clampProgress(patch.progress)
+    if (patch.sessionId !== undefined) task.sessionId = text(patch.sessionId, 200) || null
+    if (patch.workspaceId !== undefined) task.workspaceId = text(patch.workspaceId, 120) || null
+    if (patch.workspacePath !== undefined) task.workspacePath = text(patch.workspacePath, 1024) || null
+    if (patch.workspaceTitle !== undefined) task.workspaceTitle = text(patch.workspaceTitle, 200) || null
     if (patch.column !== undefined && COLUMN_SET.has(patch.column)) this.applyColumn(task, patch.column)
     task.updatedAt = this.now()
     this.touch()

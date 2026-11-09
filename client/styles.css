@@ -462,6 +462,14 @@
 }
 .tb-session { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tb-session code { padding: 3px 8px; border-radius: 7px; background: color-mix(in srgb, var(--tb-ink) 7%, transparent); font-size: 11px; }
+.tb-workspace { gap: 7px; }
+.tb-workspace-path {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 16px;
+  color: var(--tb-ink2);
+  word-break: break-all;
+}
 .tb-muted { font-size: 12px; line-height: 19px; color: var(--tb-ink2); }
 .tb-meta { font-size: 10.5px; color: var(--tb-ink2); opacity: .8; }
 

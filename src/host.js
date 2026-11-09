@@ -1,6 +1,7 @@
 // 任务看板 host 半片：/task-board/* 接口、会话派发、进度折叠与 task_board 工具。
+import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { basename, isAbsolute, join } from 'node:path'
 import { Board, COLUMNS, normalizeClock } from './board.js'
 
 const MAX_JSON = 1_000_000
@@ -149,9 +150,132 @@ export function apply(ctx) {
 
   const sessionController = () => ctx.get('sessionController')
 
-  async function openSession() {
+  /** 宿主注册的工作区；服务缺席时返回空列表，功能降级为默认目录。 */
+  function registeredWorkspaces() {
+    try {
+      const rows = ctx.get('workspaceRegistry')?.list?.() ?? []
+      return rows
+        .map(row => ({
+          id: typeof row?.id === 'string' ? row.id : '',
+          path: typeof row?.path === 'string' ? row.path : '',
+          title: typeof row?.title === 'string' ? row.title : '',
+        }))
+        .filter(row => row.id && row.path)
+    } catch {
+      return []
+    }
+  }
+
+  /** 卡片绑定的工作区：注册表里的记录优先，其次用保存下来的路径。 */
+  function workspaceOf(task) {
+    if (!task?.workspaceId && !task?.workspacePath) return null
+    const rows = registeredWorkspaces()
+    const row = task.workspaceId ? rows.find(entry => entry.id === task.workspaceId) : null
+    if (row) return row
+    if (task.workspacePath) {
+      const byPath = rows.find(entry => entry.path === task.workspacePath)
+      if (byPath) return byPath
+      return {
+        id: task.workspaceId || '',
+        path: task.workspacePath,
+        title: task.workspaceTitle || basename(task.workspacePath),
+      }
+    }
+    return null
+  }
+
+  /**
+   * 解析一个工作区选择：客户端给的是 `{ workspaceId, workspacePath }`，工具给的是字符串
+   * （id / 绝对路径 / 标题）。返回 `{ ok, value }`，value 为 null 表示「跟随默认目录」。
+   */
+  async function settleWorkspace(selector) {
+    if (!selector || typeof selector !== 'object') return { ok: true, value: null }
+    const rawId = typeof selector.workspaceId === 'string' ? selector.workspaceId.trim() : ''
+    const rawPath = typeof selector.workspacePath === 'string' ? selector.workspacePath.trim() : ''
+    const rawTitle = typeof selector.workspaceTitle === 'string' ? selector.workspaceTitle.trim() : ''
+    if (!rawId && !rawPath) return { ok: true, value: null }
+    const rows = registeredWorkspaces()
+    const byId = rawId ? rows.find(entry => entry.id === rawId) : null
+    if (byId) return { ok: true, value: byId }
+    if (!rawPath) return { ok: false, error: '工作区已不存在，请重新选择' }
+    const direct = rows.find(entry => entry.path === rawPath)
+    if (direct) return { ok: true, value: direct }
+    if (!isAbsolute(rawPath)) return { ok: false, error: '工作区路径必须是绝对路径' }
+    try {
+      const canonical = await realpath(rawPath)
+      const match = rows.find(entry => entry.path === canonical)
+      if (match) return { ok: true, value: match }
+      const info = await stat(canonical)
+      if (!info.isDirectory()) return { ok: false, error: `工作区不是目录：${rawPath}` }
+      return { ok: true, value: { id: rawId, path: canonical, title: rawTitle || basename(rawPath) } }
+    } catch {
+      return { ok: false, error: `工作区目录不可用：${rawPath}` }
+    }
+  }
+
+  /** 工具里的 workspace 参数：工作区 id、绝对路径或已注册工作区标题。 */
+  async function settleWorkspaceText(value) {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (!text) return { ok: true, value: null }
+    const rows = registeredWorkspaces()
+    const row =
+      rows.find(entry => entry.id === text) ||
+      rows.find(entry => entry.path === text) ||
+      rows.find(entry => entry.title && entry.title === text)
+    if (row) return { ok: true, value: row }
+    if (isAbsolute(text)) return settleWorkspace({ workspacePath: text })
+    return { ok: false, error: `找不到工作区：${text}` }
+  }
+
+  const workspaceFields = workspace => ({
+    workspaceId: workspace?.id || null,
+    workspacePath: workspace?.path || null,
+    workspaceTitle: workspace?.title || null,
+  })
+
+  const workspaceChanged = (task, workspace) =>
+    (task?.workspaceId || '') !== (workspace?.id || '') || (task?.workspacePath || '') !== (workspace?.path || '')
+
+  const hasWorkspaceInput = body =>
+    Boolean(body && typeof body === 'object') &&
+    (body.workspace !== undefined || body.workspaceId !== undefined || body.workspacePath !== undefined)
+
+  const withoutWorkspace = body => {
+    const { workspace, workspaceId, workspacePath, workspaceTitle, ...rest } = body ?? {}
+    return rest
+  }
+
+  /** 工具加卡没指定工作区时，跟随发起它的会话所在的工作区。 */
+  async function toolWorkspace(args, actorSessionId) {
+    if (args?.workspace !== undefined) return settleWorkspaceText(args.workspace)
+    if (!actorSessionId) return { ok: true, value: null }
+    const directory = sessionDirectory(actorSessionId)
+    if (!directory) return { ok: true, value: null }
+    const match = registeredWorkspaces().find(entry => entry.path === directory)
+    return { ok: true, value: match || null }
+  }
+
+  /** 派发时新建会话：有绑定工作区就落在那里，否则用宿主默认目录。 */
+  async function openSession(task) {
     const ctrl = sessionController()
     if (!ctrl) throw new Error('当前环境没有会话服务，无法派发任务')
+    const workspace = workspaceOf(task)
+    if (workspace) {
+      try {
+        const value = workspace.id
+          ? await ctrl.create({ workspaceId: workspace.id })
+          : await ctrl.create({ cwd: workspace.path })
+        return String(value.sessionId)
+      } catch (error) {
+        if (!workspace.id) throw error
+        try {
+          const value = await ctrl.create({ cwd: workspace.path })
+          return String(value.sessionId)
+        } catch {
+          throw error
+        }
+      }
+    }
     const cwd = boardDirectory()
     let workspaces = []
     try {
@@ -159,12 +283,12 @@ export function apply(ctx) {
     } catch {
       workspaces = []
     }
-    const workspace = workspaces.find(row => row?.path === cwd) ?? workspaces[0]
+    const fallback = workspaces.find(row => row?.path === cwd) ?? workspaces[0]
     try {
-      const value = workspace ? await ctrl.create({ workspaceId: workspace.id }) : await ctrl.create({ cwd })
+      const value = fallback ? await ctrl.create({ workspaceId: fallback.id }) : await ctrl.create({ cwd })
       return String(value.sessionId)
     } catch (error) {
-      if (!workspace) throw error
+      if (!fallback) throw error
       const value = await ctrl.create({ cwd })
       return String(value.sessionId)
     }
@@ -180,7 +304,7 @@ export function apply(ctx) {
     inflight.add(task.id)
     try {
       let sessionId = options.sessionId || task.sessionId
-      if (!sessionId) sessionId = await openSession()
+      if (!sessionId) sessionId = await openSession(task)
       board.markDispatched(task.id, sessionId)
       await board.flushNow()
       const signal = new AbortController().signal
@@ -271,6 +395,9 @@ export function apply(ctx) {
     const state = board.list()
     const index = await automationIndex()
     state.schedulesRevision = catalog.stamp || ''
+    state.workspaces = registeredWorkspaces()
+    state.defaultWorkspacePath = boardDirectory()
+    state.workspacesRevision = state.workspaces.map(entry => `${entry.id}:${entry.path}:${entry.title}`).sort().join('|')
     if (!index.size) return state
     state.tasks = state.tasks.map(task => {
       if (!task.automation?.scheduleId) return task
@@ -287,15 +414,16 @@ export function apply(ctx) {
   async function createSchedule(task, spec, sessionId) {
     const service = scheduleService()
     if (typeof service?.create !== 'function') return { ok: false, error: '当前环境没有定时任务服务，自动化不可用' }
+    const cwd = workspaceOf(task)?.path || automationDirectory(sessionId)
     try {
       const entry = await service.create({
         title: scheduleTitle(task),
         prompt: buildPrompt(task),
         timing: { kind: 'rrule', rrule: spec.rrule },
-        target: { kind: 'new_once', create: { cwd: automationDirectory(sessionId) } },
+        target: { kind: 'new_once', create: { cwd } },
       })
       invalidateCatalog()
-      return { ok: true, entry }
+      return { ok: true, entry, cwd }
     } catch (error) {
       return { ok: false, error: messageOf(error) }
     }
@@ -342,6 +470,7 @@ export function apply(ctx) {
       time: spec.time,
       weekdays: spec.weekdays,
       timeZone: spec.timeZone,
+      targetPath: created.cwd || '',
       active: entry.status !== 'paused',
       reservedSessionId: reserved,
     })
@@ -374,17 +503,23 @@ export function apply(ctx) {
       return result.ok ? {} : { warning: `自动化没有生效：${result.error}` }
     }
     const spec = hasTiming(input) ? buildRrule(input) : null
+    const targetPath = workspaceOf(task)?.path || ''
     const patch = { title: scheduleTitle(task), prompt: buildPrompt(task) }
     if (spec && spec.rrule !== existing.rrule) patch.timing = { kind: 'rrule', rrule: spec.rrule }
+    // 换了工作区：下一次投递要在新目录里建会话，定时任务的目标也要跟着改。
+    const retarget = Boolean(targetPath && targetPath !== (existing.targetPath || ''))
+    if (retarget) patch.target = { kind: 'new_once', create: { cwd: targetPath } }
     const active = typeof input?.active === 'boolean' ? input.active : existing.active
     if (active !== existing.active) patch.active = active
     const result = await editSchedule(existing.scheduleId, patch)
     if (!result.ok) return { warning: `自动化任务没有更新：${result.error}` }
+    const reserved = retarget && result.entry?.target?.kind === 'new_once' ? String(result.entry.target.sessionId) : ''
     board.setAutomation(task.id, {
       ...existing,
       ...(spec && spec.rrule !== existing.rrule
         ? { rrule: spec.rrule, frequency: spec.frequency, time: spec.time, weekdays: spec.weekdays, timeZone: spec.timeZone }
         : {}),
+      ...(retarget ? { targetPath, reservedSessionId: reserved || existing.reservedSessionId } : {}),
       active,
       error: '',
     })
@@ -508,7 +643,13 @@ export function apply(ctx) {
     const done = task => ({ ok: true, task: { ...task } })
     switch (op) {
       case 'add': {
-        const task = board.add(body, { source: 'board' })
+        let workspace = null
+        if (hasWorkspaceInput(body)) {
+          const picked = typeof body.workspace === 'string' ? await settleWorkspaceText(body.workspace) : await settleWorkspace(body)
+          if (!picked.ok) return fail(picked.error)
+          workspace = picked.value
+        }
+        const task = board.add({ ...withoutWorkspace(body), ...workspaceFields(workspace) }, { source: 'board' })
         let warning = ''
         if (body?.automation) {
           const result = await applyAutomation(task, body.automation)
@@ -520,7 +661,17 @@ export function apply(ctx) {
       case 'update': {
         const task = board.find(id)
         if (!task) return fail('任务不存在')
-        board.update(id, body)
+        if (hasWorkspaceInput(body)) {
+          const picked = typeof body.workspace === 'string' ? await settleWorkspaceText(body.workspace) : await settleWorkspace(body)
+          if (!picked.ok) return fail(picked.error)
+          if (workspaceChanged(task, picked.value)) {
+            if (task.running) return fail('这张卡正在执行，结束或停止后再换工作区')
+            board.update(id, { ...workspaceFields(picked.value), sessionId: null })
+          } else {
+            board.update(id, workspaceFields(picked.value))
+          }
+        }
+        board.update(id, withoutWorkspace(body))
         const result = await applyAutomation(task, body?.automation)
         await board.flushNow()
         return { ...done(task), ...(result.warning ? { warning: result.warning } : {}), state: await snapshot() }
@@ -576,7 +727,7 @@ export function apply(ctx) {
         tools.register({
           name: 'task_board',
           description:
-            'Read and change the user\'s sidebar task board (kanban). Use action "add" when the user asks to put something on the board or track a task, "list" to see cards, "update" to change a card, "move" to change its column (todo, doing, review, done), "run" to dispatch a card to its own session, and "result" to read the latest result of a card. Pass "automation" on add or update when the card should run itself on a recurring schedule.',
+            'Read and change the user\'s sidebar task board (kanban). Use action "add" when the user asks to put something on the board or track a task, "list" to see cards, "update" to change a card, "move" to change its column (todo, doing, review, done), "run" to dispatch a card to its own session, and "result" to read the latest result of a card. Pass "automation" on add or update when the card should run itself on a recurring schedule. Pass "workspace" on add or update to pin the card to a workspace so its session runs there.',
           parameters: {
             type: 'object',
             additionalProperties: false,
@@ -593,6 +744,11 @@ export function apply(ctx) {
               column: { type: 'string', enum: COLUMNS, description: 'Board column.' },
               progress: { type: 'number', description: 'Progress 0-100.' },
               here: { type: 'boolean', description: 'For run: execute in the current session instead of a new one.' },
+              workspace: {
+                type: 'string',
+                description:
+                  'For add/update: workspace id, absolute directory path, or workspace title that this card should run in. Omit to keep the current/default target; pass an empty string to clear it.',
+              },
               automation: {
                 type: 'object',
                 additionalProperties: false,
@@ -628,7 +784,9 @@ export function apply(ctx) {
             switch (action) {
               case 'add': {
                 if (!args?.title) return fail('标题不能为空')
-                const task = board.add(args, { source: 'session', createdBy: actorSessionId || null })
+                const picked = await toolWorkspace(args, actorSessionId)
+                if (!picked.ok) return fail(picked.error)
+                const task = board.add({ ...withoutWorkspace(args), ...workspaceFields(picked.value) }, { source: 'session', createdBy: actorSessionId || null })
                 let warning = ''
                 if (args?.automation) {
                   const result = await applyAutomation(task, args.automation, actorSessionId)
@@ -646,7 +804,17 @@ export function apply(ctx) {
               case 'update': {
                 const task = board.find(id)
                 if (!task) return fail('任务不存在')
-                board.update(id, args ?? {})
+                if (args?.workspace !== undefined) {
+                  const picked = await settleWorkspaceText(args.workspace)
+                  if (!picked.ok) return fail(picked.error)
+                  if (workspaceChanged(task, picked.value)) {
+                    if (task.running) return fail('这张卡正在执行，结束或停止后再换工作区')
+                    board.update(id, { ...workspaceFields(picked.value), sessionId: null })
+                  } else {
+                    board.update(id, workspaceFields(picked.value))
+                  }
+                }
+                board.update(id, withoutWorkspace(args ?? {}))
                 const result = await applyAutomation(task, args?.automation, actorSessionId)
                 await board.flushNow()
                 return { ok: true, task: await detailed(task), ...(result.warning ? { warning: result.warning } : {}) }
@@ -683,6 +851,9 @@ export function apply(ctx) {
                   column: task.column,
                   progress: task.progress,
                   sessionId: task.sessionId,
+                  workspaceId: task.workspaceId,
+                  workspacePath: task.workspacePath,
+                  workspaceTitle: task.workspaceTitle,
                   automation: compactAutomation(task.automation, (await automationIndex()).get(task.automation?.scheduleId)),
                   result: task.result,
                   error: task.error,
@@ -700,7 +871,7 @@ export function apply(ctx) {
         ctx.get('systemPrompt')?.section({
           name: 'task-board',
           order: 60,
-          text: 'The user keeps a kanban task board in the sidebar. When they ask to put a task on the board, check the board, or start a card, use the task_board tool rather than inventing another format. A card can also repeat automatically: pass the automation parameter when adding or updating it.',
+          text: 'The user keeps a kanban task board in the sidebar. When they ask to put a task on the board, check the board, or start a card, use the task_board tool rather than inventing another format. A card can also repeat automatically: pass the automation parameter when adding or updating it. To run a card in a particular workspace, pass that workspace id, path, or title as the workspace parameter.',
         }),
       'task-board: prompt section',
     )
@@ -734,6 +905,9 @@ function compact(task, runtime) {
     steps: task.steps,
     source: task.source,
     sessionId: task.sessionId,
+    workspaceId: task.workspaceId,
+    workspacePath: task.workspacePath,
+    workspaceTitle: task.workspaceTitle,
     automation: compactAutomation(task.automation, runtime),
     result: task.result,
     error: task.error,

@@ -44,6 +44,8 @@ export const IconMore = props => React.createElement(Svg, props,
   React.createElement('circle', { cx: 18.5, cy: 12, r: 1.4, fill: 'currentColor', stroke: 'none' }))
 export const IconChat = props => React.createElement(Svg, props,
   React.createElement('path', { d: 'M20 12a8 8 0 10-3.2 6.4L20 20l-1.1-3.4A7.9 7.9 0 0020 12z' }))
+export const IconFolder = props => React.createElement(Svg, props,
+  React.createElement('path', { d: 'M3.5 7.5a2 2 0 012-2h3.2l1.8 2h6.5a2 2 0 012 2v8a2 2 0 01-2 2h-11.5a2 2 0 01-2-2v-10z' }))
 export const IconClock = props => React.createElement(Svg, props,
   React.createElement('circle', { cx: 12, cy: 12, r: 8.5 }),
   React.createElement('path', { d: 'M12 7.5V12l3 2' }))

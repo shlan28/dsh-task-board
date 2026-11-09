@@ -5,6 +5,7 @@ import {
   IconChat,
   IconClock,
   IconExternal,
+  IconFolder,
   IconPlay,
   IconPlus,
   IconRefresh,
@@ -83,6 +84,18 @@ function automationPayload(value) {
 
 function defaultAutomation() {
   return { frequency: 'daily', time: '09:00', weekdays: [todayWeekday()] }
+}
+
+function baseName(value) {
+  const text = String(value || '').replace(/[\\/]+$/, '')
+  const parts = text.split(/[\\/]/)
+  return parts[parts.length - 1] || text
+}
+
+/** 工作区展示名：标题优先，其次用路径最后一段。 */
+function workspaceLabel(workspace) {
+  if (!workspace) return ''
+  return workspace.title || baseName(workspace.path)
 }
 
 function AutomationFields({ t, value, onChange }) {
@@ -229,6 +242,14 @@ function Card({ task, t }) {
       'div',
       { className: 'tb-card-chips' },
       task.tag ? React.createElement('span', { className: 'tb-chip' }, `#${task.tag}`) : null,
+      task.workspacePath
+        ? React.createElement(
+            'span',
+            { className: 'tb-chip is-quiet', title: task.workspacePath },
+            React.createElement(IconFolder, { size: 11 }),
+            workspaceLabel(task),
+          )
+        : null,
       task.automation
         ? React.createElement(
             'span',
@@ -440,11 +461,12 @@ function Header({ t, tasks, query, filter }) {
   )
 }
 
-function AddDialog({ t, defaultColumn, tags }) {
+function AddDialog({ t, defaultColumn, tags, workspaces }) {
   const [title, setTitle] = React.useState('')
   const [note, setNote] = React.useState('')
   const [tag, setTag] = React.useState('')
   const [column, setColumn] = React.useState(defaultColumn || 'todo')
+  const [workspaceId, setWorkspaceId] = React.useState('')
   const [repeatOn, setRepeatOn] = React.useState(false)
   const [rule, setRule] = React.useState(defaultAutomation)
   const [busy, setBusy] = React.useState(false)
@@ -453,11 +475,22 @@ function AddDialog({ t, defaultColumn, tags }) {
     inputRef.current?.focus()
   }, [])
 
+  const list = Array.isArray(workspaces) ? workspaces : []
+
   const submit = async event => {
     event.preventDefault()
     if (!title.trim() || busy) return
     setBusy(true)
-    const payload = { title, note, tag, column }
+    const picked = workspaceId ? list.find(entry => entry.id === workspaceId) : null
+    const payload = {
+      title,
+      note,
+      tag,
+      column,
+      workspaceId: picked?.id ?? null,
+      workspacePath: picked?.path ?? null,
+      workspaceTitle: picked?.title ?? null,
+    }
     if (repeatOn) payload.automation = automationPayload(rule)
     const result = await actions.add(payload)
     setBusy(false)
@@ -548,6 +581,17 @@ function AddDialog({ t, defaultColumn, tags }) {
         )
       : null,
     React.createElement(
+      'label',
+      { className: 'tb-field' },
+      React.createElement('span', null, t('Workspace')),
+      React.createElement(
+        'select',
+        { value: workspaceId, onChange: event => setWorkspaceId(event.target.value) },
+        React.createElement('option', { value: '' }, t('Default directory')),
+        list.map(entry => React.createElement('option', { key: entry.id, value: entry.id }, workspaceLabel(entry))),
+      ),
+    ),
+    React.createElement(
       'div',
       { className: 'tb-field tb-auto-field' },
       React.createElement('span', null, t('Automation')),
@@ -592,7 +636,7 @@ function AddDialog({ t, defaultColumn, tags }) {
   )
 }
 
-function DetailSheet({ task, t }) {
+function DetailSheet({ task, t, workspaces }) {
   const [confirmDelete, setConfirmDelete] = React.useState(false)
   const [confirmRemove, setConfirmRemove] = React.useState(false)
   const [editing, setEditing] = React.useState(false)
@@ -606,6 +650,28 @@ function DetailSheet({ task, t }) {
   const meta = COLUMN_META[task.column]
   const running = isRunning(task)
   const phase = phaseLabel(task, t)
+  const workspaceList = Array.isArray(workspaces) ? workspaces : []
+  const savedWorkspace = task.workspacePath
+    ? workspaceList.find(entry => entry.id === task.workspaceId) || workspaceList.find(entry => entry.path === task.workspacePath)
+    : null
+  const savedKey = task.workspacePath && !savedWorkspace ? `path:${task.workspacePath}` : ''
+  const workspaceValue = savedWorkspace ? savedWorkspace.id : savedKey
+
+  const changeWorkspace = async event => {
+    const value = event.target.value
+    let payload
+    if (!value) {
+      payload = { workspaceId: null, workspacePath: null, workspaceTitle: null }
+    } else if (value.startsWith('path:')) {
+      payload = { workspaceId: null, workspacePath: value.slice(5), workspaceTitle: task.workspaceTitle || null }
+    } else {
+      const entry = workspaceList.find(item => item.id === value)
+      if (!entry) return
+      payload = { workspaceId: entry.id, workspacePath: entry.path, workspaceTitle: entry.title || null }
+    }
+    const result = await actions.update(task.id, payload)
+    if (result) notify(result.warning || t('Workspace updated'), { error: Boolean(result.warning) })
+  }
 
   const startEditing = () => {
     const automation = task.automation
@@ -766,6 +832,40 @@ function DetailSheet({ task, t }) {
             React.createElement('p', { className: 'tb-prose' }, task.note),
           )
         : null,
+      React.createElement(
+        'section',
+        { className: 'tb-block' },
+        React.createElement('h4', null, t('Workspace')),
+        React.createElement(
+          'label',
+          { className: 'tb-field tb-workspace' },
+          React.createElement(
+            'select',
+            { value: workspaceValue, onChange: changeWorkspace, 'aria-label': t('Workspace') },
+            React.createElement('option', { value: '' }, t('Default directory')),
+            workspaceList.map(entry =>
+              React.createElement('option', { key: entry.id, value: entry.id }, workspaceLabel(entry)),
+            ),
+            savedKey
+              ? React.createElement(
+                  'option',
+                  { value: savedKey },
+                  `${task.workspaceTitle || baseName(task.workspacePath)} · ${t('Removed workspace')}`,
+                )
+              : null,
+          ),
+          task.workspacePath
+            ? React.createElement('code', { className: 'tb-workspace-path' }, task.workspacePath)
+            : null,
+        ),
+        React.createElement(
+          'p',
+          { className: 'tb-hint' },
+          task.automation
+            ? t('Scheduled runs start here too.')
+            : t('A new session starts in this workspace when you start the card.'),
+        ),
+      ),
       React.createElement(
         'section',
         { className: 'tb-block tb-auto-block' },
@@ -934,7 +1034,7 @@ export function BoardPanel() {
     if (state.filter === 'active' && task.column !== 'doing') return false
     if (state.filter === 'review' && task.column !== 'review') return false
     if (!query) return true
-    return [task.title, task.note, task.tag].some(value => String(value || '').toLowerCase().includes(query))
+    return [task.title, task.note, task.tag, task.workspaceTitle].some(value => String(value || '').toLowerCase().includes(query))
   })
 
   return React.createElement(
@@ -969,8 +1069,8 @@ export function BoardPanel() {
               ? React.createElement('p', { className: 'tb-none' }, t('Nothing matches this filter.'))
               : null,
           ),
-    state.dialog ? React.createElement(Modal, { title: t('New task'), onClose: closeDialog, width: 520 }, React.createElement(AddDialog, { t, defaultColumn: state.dialog.column, tags })) : null,
-    detailTask ? React.createElement(DetailSheet, { task: detailTask, t }) : null,
+    state.dialog ? React.createElement(Modal, { title: t('New task'), onClose: closeDialog, width: 520 }, React.createElement(AddDialog, { t, defaultColumn: state.dialog.column, tags, workspaces: state.workspaces })) : null,
+    detailTask ? React.createElement(DetailSheet, { task: detailTask, t, workspaces: state.workspaces }) : null,
     React.createElement(Toast, { toast: state.toast, onClose: () => setState({ toast: null }) }),
   )
 }
