@@ -9,15 +9,32 @@ node scripts/build.mjs                     # 1. 改了 client/ 就重新构建�
 git add -A && git commit -m "feat: ..."     # 2. 提交改动
 npm version patch -m "chore: release %s"    # 3. 版本号 +1 并打 tag（minor / major 同理）
 npm publish                                # 4. 发布，prepublishOnly 会再构建一次
-git push --follow-tags                     # 5. 推代码和 tag，GitHub build CI 开始跑
+curl -X PUT -H 'Content-Type: application/json' \
+  -d '{"tips":"release <版本号>"}' \
+  https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs   # 5. 触发 npmmirror 同步
+git push --follow-tags                     # 6. 推代码和 tag，GitHub build CI 开始跑
 ```
 
 ## 要点
 
 - **版本号必须递增**，registry 不接受重复版本。发布后用 `npm view dsh-color-task-board version` 校验。
+- **发布后要手动触发一次 npmmirror 同步**（为什么见下）。命令返回 `{"ok":true,"id":"…","state":"waiting"}`，用返回的 id 查状态：
+
+  ```bash
+  curl https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs/<id>
+  ```
+
+  也可以打开 <https://npmmirror.com/sync/dsh-color-task-board> 手动触发。同步完成的标准是镜像的 `dist-tags.latest` 和 `versions` 里出现新版本：
+
+  ```bash
+  curl -s https://registry.npmmirror.com/dsh-color-task-board | node -e \
+    'const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(j["dist-tags"],Object.keys(j.versions))'
+  ```
+
+- **为什么必须同步镜像**：DSH 插件中心的「检查更新」用 `pnpm view` 问注册表，起点是这个包在 profile 里上次安装所用的源；一旦 profile 的 pnpm 元数据缓存里记的是 `registry.npmmirror.com`，而镜像「正常应答但版本列表还是旧的」，DSH 不会回退官方源，用户就会看到「没有更新」。2026-11-09 的 0.1.6 就踩过这个坑：官方源已有 0.1.6，镜像只到 0.1.5，插件中心一直显示 0.1.5，手动同步后立刻可见。
 - `npm publish` 会自动执行 `prepublishOnly`（`node scripts/build.mjs`），所以不需要手动传 `--access`；发布时**不需要 `--otp`**——`~/.npmrc` 里的 `//registry.npmjs.org/:_authToken` 是带 **Bypass 2FA** 的 granular token。
 - 这类 token 只能发布/读取包，**不能**做删包、改 2FA 等账号级操作；那些只能在网页上用安全密钥完成。
-- 发布后 registry 是异步处理：`npm publish` 返回成功但 `npm view` 可能先 404，通常 1–3 分钟后可见；期间可能出现 `0.0.0-stage` 占位版本，属正常现象。
+- 发布后 registry 是异步处理：`npm publish` 返回成功但 `npm view` 可能先 404，通常 1–3 分钟后可见；期间可能出现 `0.0.0-stage` 占位版本，属正常现象。官方源和镜像都确认可见后再对外说「已发布」。
 - CI（`.github/workflows/build.yml`）会校验提交的 `dist/client.js` 与 `client/` 源码一致，改完客户端务必把重建结果一起提交。
 
 ## 首次发布 / 换名后
