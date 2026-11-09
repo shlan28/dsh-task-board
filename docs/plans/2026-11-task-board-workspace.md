@@ -91,3 +91,5 @@
   - 执行中的卡换工作区被拒绝；发起会话目录命中注册工作区时自动绑定；没有工作区的卡仍走默认目录；
   - `board.json` 新增 → 重载 → 清空工作区字段的持久化测试通过。
 - 面板改动只做了构建与静态检查，界面交互（下拉、卡片工作区提示）在实机刷新后人工确认。
+- 实机验证（desktop profile，`link:` 安装）：卸载 bundle 再装回后，`task_board` 工具说明已带 `workspace` 参数；用工具建卡时 `workspace: "codex-bridge"` 解析出真实工作区 id / 路径，改到 `default-workspace`、传 `workspace: ""` 清空、删卡都成功，验证后看板只剩原有卡片。
+- 面板需要刷新页面才会加载新的 `dist/client.js`；`src/` 的改动要按 [deploy.md](../deploy.md) 卸载再安装才生效。
