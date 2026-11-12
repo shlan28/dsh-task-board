@@ -54,6 +54,7 @@ node scripts/build.mjs
 ## 安装后验证
 
 - 侧栏出现「任务看板」入口，点开显示四列看板
+- 页头右上角的空间下拉显示「默认空间」，可以新建空间并在空间之间切换
 - 任意会话里 `task_board` 工具可调用（`list` 返回 `ok: true`）
 - 宿主侧数据接口可用：`GET /task-board/state`（未带鉴权头会返回 401，属正常）
 - 自动化卡片会在 Harness 的「自动化任务」页面出现同名任务（标题形如 `任务看板 · <卡片标题>`）
@@ -71,7 +72,7 @@ node scripts/build.mjs
 
 | 数据 | 位置 | 说明 |
 |---|---|---|
-| 看板卡片 | `$DSH_HOME/task-board/board.json` | 普通 JSON，插件自己读写；原子写入（临时文件 + rename） |
+| 看板卡片与空间 | `$DSH_HOME/task-board/board.json` | 普通 JSON（`version: 2`，含 `spaces` / `activeSpaceId` / 卡片 `spaceId`），插件自己读写；原子写入（临时文件 + rename）；旧格式会自动迁移 |
 | 自动化规则 | `$DSH_HOME/storages/schedule.json` | 由 DSH 内置定时任务服务持有，卡片里只存任务 id、规则和预留会话 |
 
 插件不写会话日志、不改 profile 配置。

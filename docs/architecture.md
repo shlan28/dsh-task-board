@@ -29,6 +29,16 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 - 换工作区会清空卡片的 `sessionId`，下一次执行在新目录里新建会话；正在执行的卡不允许换（避免运行中会话和卡片标签对不上）。
 - `task_board add` 没给 `workspace` 时，若发起会话的目录正好是某个已注册工作区，自动绑到那个工作区。
 
+## 空间隔离
+
+- `board.json` 升到 `version: 2`，多了 `spaces` 与 `activeSpaceId`，每张卡片带 `spaceId`。默认空间的 id 固定为 `default`，名称不落盘（空串），界面按语言显示「默认空间 / Default space」，所以切换界面语言不会改用户数据。
+- 读取旧文件时补默认空间：没有 `spaceId` 的卡片回落默认空间，失效的 `spaceId` / `activeSpaceId` 也回落默认空间；迁移后 `touch()` 一次，把文件落盘成新版本，不会每次启动都重新迁移。
+- `Board` 的空间操作：`addSpace`（空名、与默认空间同名、重名都拒绝，创建后切到新空间）、`removeSpace`（默认空间不可删，空间里的卡片移回默认空间后才删除空间）、`selectSpace`（写 `activeSpaceId`）。`add` 缺省写当前空间，`clearDone` 只清指定空间（缺省当前空间）。
+- 接口：`GET /task-board/state` 额外返回 `spaces`、`activeSpaceId`、`spacesRevision`；`POST /task-board/op` 新增 `addSpace` / `removeSpace` / `selectSpace`，`add` 接受 `spaceId`，`clearDone` 接受 `spaceId`。
+- `task_board` 工具新增 `space` 参数（`add` / `list`，空间 id 或名称，缺省当前空间）与 `spaces`（列空间和各自卡片数）、`addSpace`（新建空间）动作；`list` 只返回目标空间的卡片，`compact` 输出带 `spaceId`。
+- 面板按 `activeSpaceId` 过滤：列计数、`tags`、搜索、`全部 / 进行中 / 待验收` 筛选、「清空已完成」都只算当前空间；切换空间由 Host 落盘，所以刷新页面或多个标签页看到的当前空间一致。
+- 会话事件折叠（`applyEvent`）不分空间：卡片在别的空间里后台执行时进度照常折叠，切回去就能看到。
+
 ## 自动化投递链路
 
 - 卡片上的自动化由 DSH 内置 `schedule` 服务承载（不自己维护定时器），规则用 RRULE：`DTSTART;TZID=<zone>:20260101THHMM00` + `RRULE:FREQ=...`。
@@ -41,6 +51,6 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 
 ## 数据与持久化
 
-- 卡片：`$DSH_HOME/task-board/board.json`，`Board` 类在内存里维护，`touch()` 攒 250ms 后原子写（临时文件 + rename）；卡片里的工作区字段和 `automation.targetPath` 一起持久化，旧文件缺这些字段按空处理。
+- 卡片与空间：`$DSH_HOME/task-board/board.json`（`version: 2`，含 `spaces`、`activeSpaceId`、`tasks[].spaceId`），`Board` 类在内存里维护，`touch()` 攒 250ms 后原子写（临时文件 + rename）；卡片里的工作区字段和 `automation.targetPath` 一起持久化，旧文件缺这些字段按空处理。
 - 自动化规则：`$DSH_HOME/storages/schedule.json`，属于 DSH 定时任务服务。
 - 工作区列表不落盘：每次 `/task-board/state` 从 `workspaceRegistry.list()` 现读，客户端把 `workspacesRevision` 算进刷新指纹。

@@ -9,7 +9,7 @@ README 只保留项目简介、安装和使用入口；技术、产品、部署�
 ```text
 src/
   host.js       Host 半片：/task-board/* 接口、会话派发、定时任务对接、task_board 工具、提示词段落
-  board.js      看板数据层：任务折叠、进度与结果、自动化配置与持久化
+  board.js      看板数据层：任务折叠、进度与结果、空间、自动化配置与持久化
 client/         浏览器半片：侧栏入口、看板面板、弹窗、拖拽、样式、i18n
 dist/           构建产物 dist/client.js，安装时直接使用
 locale/         插件在插件管理页里的标题与描述
@@ -25,7 +25,7 @@ cordis.patch.yml bundle patch，插入 task-board 这一行
 | [deploy.md](deploy.md) | 部署：安装方式、安装后验证、更新、卸载、数据位置、兼容性 |
 | [release.md](release.md) | 发布：版本号、npm publish、npmmirror 同步、tag、发布后校验 |
 | [architecture.md](architecture.md) | 实现：host/client 分工、数据流、自动化投递链路 |
-| [plans/](plans/) | 方案与计划文档；[2026-11-automation-accept-flow.md](plans/2026-11-automation-accept-flow.md) — 自动化卡的验收流程；[2026-11-task-board-workspace.md](plans/2026-11-task-board-workspace.md) — 任务卡绑定工作区 |
+| [plans/](plans/) | 方案与计划文档；[2026-11-automation-accept-flow.md](plans/2026-11-automation-accept-flow.md) — 自动化卡的验收流程；[2026-11-task-board-workspace.md](plans/2026-11-task-board-workspace.md) — 任务卡绑定工作区；[2026-11-task-board-spaces.md](plans/2026-11-task-board-spaces.md) — 空间隔离与空间下拉 |
 
 ## 维护约定
 
