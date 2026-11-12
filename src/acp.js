@@ -51,6 +51,7 @@ export class AcpConnection {
         env: { ...process.env, ...(this.options.env || {}) },
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
+        shell: process.platform === 'win32',
       })
     } catch (error) {
       throw new AcpError(`无法启动 ACP 适配器：${messageOf(error)}`)

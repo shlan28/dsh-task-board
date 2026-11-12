@@ -901,13 +901,17 @@ export function apply(ctx) {
           workspace = picked.value
         }
         const task = board.add({ ...withoutWorkspace(body), ...workspaceFields(workspace), spaceId: space.id }, { source: 'board' })
-        let warning = ''
+        const warnings = []
+        if (task.executor === 'codex') {
+          const status = await codex.detect()
+          if (status.state !== 'ready') warnings.push(`Codex 暂不可用：${status.message}`)
+        }
         if (body?.automation) {
           const result = await applyAutomation(task, body.automation)
-          warning = result.warning || ''
+          if (result.warning) warnings.push(result.warning)
         }
         await board.flushNow()
-        return { ...done(task), ...(warning ? { warning } : {}), state: await snapshot() }
+        return { ...done(task), ...(warnings.length ? { warning: warnings.join('；') } : {}), state: await snapshot() }
       }
       case 'update': {
         const task = board.find(id)
@@ -1094,13 +1098,17 @@ export function apply(ctx) {
                   { ...withoutWorkspace(args), ...workspaceFields(picked.value), spaceId: space.id },
                   { source: 'session', createdBy: actorSessionId || null },
                 )
-                let warning = ''
+                const warnings = []
+                if (task.executor === 'codex') {
+                  const status = await codex.detect()
+                  if (status.state !== 'ready') warnings.push(`Codex 暂不可用：${status.message}`)
+                }
                 if (args?.automation) {
                   const result = await applyAutomation(task, args.automation, actorSessionId)
-                  warning = result.warning || ''
+                  if (result.warning) warnings.push(result.warning)
                 }
                 await board.flushNow()
-                return { ok: true, task: await detailed(task), ...(warning ? { warning } : {}) }
+                return { ok: true, task: await detailed(task), ...(warnings.length ? { warning: warnings.join('；') } : {}) }
               }
               case 'list': {
                 const space = args?.space ? spaceBy(String(args.space)) : board.space()

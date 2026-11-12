@@ -72,7 +72,12 @@ export function runCommand(command, args, { timeoutMs = DETECT_TIMEOUT_MS, cwd }
   return new Promise((resolve, reject) => {
     let child
     try {
-      child = spawn(command, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      child = spawn(command, args, {
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        shell: process.platform === 'win32',
+      })
     } catch (error) {
       reject(error)
       return
