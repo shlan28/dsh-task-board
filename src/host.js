@@ -746,7 +746,13 @@ export function apply(ctx) {
         board.setAutomation(task.id, { ...automation, error: '' })
         const result = await codex.start(task)
         if (!result.ok) {
-          board.setAutomation(task.id, { ...board.find(task.id)?.automation, error: `Codex 没有启动：${result.error}` })
+          // 起不来（缺适配器/未登录等）就把下一轮推到规则里的下一次，避免每 30 秒重试刷日志。
+          const calc = nextAtFor(automation.rrule, automation.timeZone, now + 1_000)
+          board.setAutomation(task.id, {
+            ...board.find(task.id)?.automation,
+            nextAt: calc.at,
+            error: `Codex 没有启动：${result.error}`,
+          })
           await board.flushNow()
           continue
         }
