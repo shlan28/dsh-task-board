@@ -3,6 +3,7 @@ import React from 'react'
 
 const BASE = '/task-board'
 const COLUMNS = ['todo', 'doing', 'review', 'done']
+export const DEFAULT_SPACE_ID = 'default'
 
 let snapshot = {
   tasks: [],
@@ -17,6 +18,9 @@ let snapshot = {
   detailId: null,
   toast: null,
   dragging: null,
+  spaces: [],
+  activeSpaceId: '',
+  spacesRevision: '',
   workspaces: [],
   defaultWorkspacePath: '',
   workspacesRevision: '',
@@ -61,11 +65,14 @@ export async function refresh() {
   try {
     const data = await request('/state')
     const revision = data?.revision ?? 0
-    const stamp = `${revision}:${data?.schedulesRevision ?? ''}:${data?.workspacesRevision ?? ''}`
+    const stamp = `${revision}:${data?.schedulesRevision ?? ''}:${data?.workspacesRevision ?? ''}:${data?.spacesRevision ?? ''}`
     if (snapshot.loaded && stamp === snapshot.stamp && !snapshot.error) return true
     setState({
       tasks: Array.isArray(data?.tasks) ? data.tasks : [],
       columns: Array.isArray(data?.columns) && data.columns.length ? data.columns : COLUMNS,
+      spaces: Array.isArray(data?.spaces) ? data.spaces : [],
+      activeSpaceId: typeof data?.activeSpaceId === 'string' ? data.activeSpaceId : '',
+      spacesRevision: typeof data?.spacesRevision === 'string' ? data.spacesRevision : '',
       workspaces: Array.isArray(data?.workspaces) ? data.workspaces : [],
       defaultWorkspacePath: typeof data?.defaultWorkspacePath === 'string' ? data.defaultWorkspacePath : '',
       workspacesRevision: typeof data?.workspacesRevision === 'string' ? data.workspacesRevision : '',
@@ -89,13 +96,18 @@ export async function act(op, payload = {}) {
       const revision = data.state.revision ?? snapshot.revision
       setState({
         tasks: Array.isArray(data.state.tasks) ? data.state.tasks : snapshot.tasks,
+        spaces: Array.isArray(data.state.spaces) ? data.state.spaces : snapshot.spaces,
+        activeSpaceId:
+          typeof data.state.activeSpaceId === 'string' ? data.state.activeSpaceId : snapshot.activeSpaceId,
+        spacesRevision:
+          typeof data.state.spacesRevision === 'string' ? data.state.spacesRevision : snapshot.spacesRevision,
         workspaces: Array.isArray(data.state.workspaces) ? data.state.workspaces : snapshot.workspaces,
         defaultWorkspacePath:
           typeof data.state.defaultWorkspacePath === 'string' ? data.state.defaultWorkspacePath : snapshot.defaultWorkspacePath,
         workspacesRevision:
           typeof data.state.workspacesRevision === 'string' ? data.state.workspacesRevision : snapshot.workspacesRevision,
         revision,
-        stamp: `${revision}:${data.state.schedulesRevision ?? ''}:${data.state.workspacesRevision ?? ''}`,
+        stamp: `${revision}:${data.state.schedulesRevision ?? ''}:${data.state.workspacesRevision ?? ''}:${data.state.spacesRevision ?? ''}`,
         loaded: true,
         error: null,
       })
@@ -116,7 +128,17 @@ export const actions = {
   stop: id => act('stop', { id }),
   accept: id => act('accept', { id }),
   remove: id => act('remove', { id }),
-  clearDone: () => act('clearDone'),
+  clearDone: spaceId => act('clearDone', spaceId ? { spaceId } : {}),
+  addSpace: name => act('addSpace', { name }),
+  removeSpace: id => act('removeSpace', { id }),
+  selectSpace: id => act('selectSpace', { id }),
+}
+
+/** 切换空间时收起详情抽屉，避免看着别的空间里的卡。 */
+export async function selectSpace(id) {
+  if (!id || snapshot.activeSpaceId === id) return null
+  setState({ detailId: null })
+  return actions.selectSpace(id)
 }
 
 export function setFilter(filter) {
@@ -128,7 +150,15 @@ export function setQuery(query) {
 }
 
 export function openAddDialog(column = 'todo') {
-  setState({ dialog: { column } })
+  setState({ dialog: { kind: 'task', column } })
+}
+
+export function openSpaceDialog() {
+  setState({ dialog: { kind: 'space' } })
+}
+
+export function openRemoveSpaceDialog(id) {
+  setState({ dialog: { kind: 'remove-space', id } })
 }
 
 export function closeDialog() {

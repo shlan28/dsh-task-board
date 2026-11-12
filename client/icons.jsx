@@ -53,6 +53,10 @@ export const IconSpark = props => React.createElement(Svg, props,
   React.createElement('path', { d: 'M12 3.5l1.9 5.1 5.1 1.9-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.9L12 3.5z' }),
   React.createElement('path', { d: 'M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z' }))
 export const IconChevron = props => React.createElement(Svg, props, React.createElement('path', { d: 'M9 6l6 6-6 6' }))
+export const IconLayers = props => React.createElement(Svg, props,
+  React.createElement('path', { d: 'M12 3.6l8.4 4.2-8.4 4.2-8.4-4.2 8.4-4.2z' }),
+  React.createElement('path', { d: 'M4.2 12l7.8 3.9 7.8-3.9' }),
+  React.createElement('path', { d: 'M4.2 16.2l7.8 3.9 7.8-3.9' }))
 export const IconRefresh = props => React.createElement(Svg, props,
   React.createElement('path', { d: 'M20 11a8 8 0 10-2.6 6.3' }),
   React.createElement('path', { d: 'M20 5v6h-6' }))

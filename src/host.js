@@ -2,7 +2,7 @@
 import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
-import { Board, COLUMNS, normalizeClock } from './board.js'
+import { Board, COLUMNS, DEFAULT_SPACE_ID, normalizeClock } from './board.js'
 
 const MAX_JSON = 1_000_000
 const PANEL_PATH = '/task-board'
@@ -147,6 +147,10 @@ export function apply(ctx) {
   const board = new Board(join(dshHome(), 'task-board'), { log: (...args) => ctx.logger?.warn?.(...args) })
   const ready = board.load()
   const inflight = new Set()
+
+  /** 空间展示名：默认空间没有存名字，统一用中文名给工具和日志用。 */
+  const spaceLabel = space => (space?.id === DEFAULT_SPACE_ID ? '默认空间' : space?.name || '')
+  const spaceBy = selector => board.space(typeof selector === 'string' ? selector : '')
 
   const sessionController = () => ctx.get('sessionController')
 
@@ -398,6 +402,9 @@ export function apply(ctx) {
     state.workspaces = registeredWorkspaces()
     state.defaultWorkspacePath = boardDirectory()
     state.workspacesRevision = state.workspaces.map(entry => `${entry.id}:${entry.path}:${entry.title}`).sort().join('|')
+    state.spacesRevision = `${state.activeSpaceId}:${state.spaces
+      .map(space => `${space.id}:${space.name}:${space.order}`)
+      .join('|')}`
     if (!index.size) return state
     state.tasks = state.tasks.map(task => {
       if (!task.automation?.scheduleId) return task
@@ -643,13 +650,15 @@ export function apply(ctx) {
     const done = task => ({ ok: true, task: { ...task } })
     switch (op) {
       case 'add': {
+        const space = spaceBy(body.spaceId)
+        if (!space) return fail('空间不存在')
         let workspace = null
         if (hasWorkspaceInput(body)) {
           const picked = typeof body.workspace === 'string' ? await settleWorkspaceText(body.workspace) : await settleWorkspace(body)
           if (!picked.ok) return fail(picked.error)
           workspace = picked.value
         }
-        const task = board.add({ ...withoutWorkspace(body), ...workspaceFields(workspace) }, { source: 'board' })
+        const task = board.add({ ...withoutWorkspace(body), ...workspaceFields(workspace), spaceId: space.id }, { source: 'board' })
         let warning = ''
         if (body?.automation) {
           const result = await applyAutomation(task, body.automation)
@@ -701,9 +710,29 @@ export function apply(ctx) {
         return { ...done(task), state: await snapshot() }
       }
       case 'clearDone': {
-        const removed = board.clearDone()
+        const space = spaceBy(body.spaceId)
+        if (!space) return fail('空间不存在')
+        const removed = board.clearDone(space.id)
         await board.flushNow()
         return { ok: true, removed, state: await snapshot() }
+      }
+      case 'addSpace': {
+        const result = board.addSpace(body?.name)
+        if (!result.ok) return fail(result.error)
+        await board.flushNow()
+        return { ok: true, space: { ...result.space }, state: await snapshot() }
+      }
+      case 'removeSpace': {
+        const result = board.removeSpace(id)
+        if (!result.ok) return fail(result.error)
+        await board.flushNow()
+        return { ok: true, moved: result.moved, state: await snapshot() }
+      }
+      case 'selectSpace': {
+        const space = board.selectSpace(id)
+        if (!space) return fail('空间不存在')
+        await board.flushNow()
+        return { ok: true, space: { ...space }, state: await snapshot() }
       }
       case 'dispatch': {
         const task = board.find(id)
@@ -727,17 +756,22 @@ export function apply(ctx) {
         tools.register({
           name: 'task_board',
           description:
-            'Read and change the user\'s sidebar task board (kanban). Use action "add" when the user asks to put something on the board or track a task, "list" to see cards, "update" to change a card, "move" to change its column (todo, doing, review, done), "run" to dispatch a card to its own session, and "result" to read the latest result of a card. Pass "automation" on add or update when the card should run itself on a recurring schedule. Pass "workspace" on add or update to pin the card to a workspace so its session runs there.',
+            'Read and change the user\'s sidebar task board (kanban). Use action "add" when the user asks to put something on the board or track a task, "list" to see cards, "update" to change a card, "move" to change its column (todo, doing, review, done), "run" to dispatch a card to its own session, and "result" to read the latest result of a card. Pass "automation" on add or update when the card should run itself on a recurring schedule. Pass "workspace" on add or update to pin the card to a workspace so its session runs there. Cards are grouped into spaces: pass "space" (id or name) on add/list to target one, use action "spaces" to list them, and "addSpace" to create one.',
           parameters: {
             type: 'object',
             additionalProperties: false,
             properties: {
               action: {
                 type: 'string',
-                enum: ['add', 'list', 'update', 'move', 'run', 'result', 'remove'],
+                enum: ['add', 'list', 'spaces', 'addSpace', 'update', 'move', 'run', 'result', 'remove'],
                 description: 'Operation to perform.',
               },
               id: { type: 'string', description: 'Card id, from list or add.' },
+              space: {
+                type: 'string',
+                description: 'For add/list: space id or name. Omit to use the active space.',
+              },
+              name: { type: 'string', description: 'For addSpace: name of the new space.' },
               title: { type: 'string', description: 'Card title.' },
               note: { type: 'string', description: 'Card details or acceptance criteria.' },
               tag: { type: 'string', description: 'Short label shown as a chip, such as 研发 or 写作.' },
@@ -784,9 +818,14 @@ export function apply(ctx) {
             switch (action) {
               case 'add': {
                 if (!args?.title) return fail('标题不能为空')
+                const space = args?.space ? spaceBy(String(args.space)) : board.space()
+                if (!space) return fail(`找不到空间：${args.space}`)
                 const picked = await toolWorkspace(args, actorSessionId)
                 if (!picked.ok) return fail(picked.error)
-                const task = board.add({ ...withoutWorkspace(args), ...workspaceFields(picked.value) }, { source: 'session', createdBy: actorSessionId || null })
+                const task = board.add(
+                  { ...withoutWorkspace(args), ...workspaceFields(picked.value), spaceId: space.id },
+                  { source: 'session', createdBy: actorSessionId || null },
+                )
                 let warning = ''
                 if (args?.automation) {
                   const result = await applyAutomation(task, args.automation, actorSessionId)
@@ -796,10 +835,42 @@ export function apply(ctx) {
                 return { ok: true, task: await detailed(task), ...(warning ? { warning } : {}) }
               }
               case 'list': {
-                const tasks = board.list().tasks
+                const space = args?.space ? spaceBy(String(args.space)) : board.space()
+                if (!space) return fail(`找不到空间：${args.space}`)
+                const state = board.list()
+                const tasks = state.tasks.filter(task => task.spaceId === space.id)
                 const counts = Object.fromEntries(COLUMNS.map(column => [column, tasks.filter(task => task.column === column).length]))
                 const index = await automationIndex()
-                return { ok: true, counts, tasks: tasks.map(task => compact(task, index.get(task.automation?.scheduleId))) }
+                return {
+                  ok: true,
+                  space: { id: space.id, name: spaceLabel(space) },
+                  activeSpaceId: state.activeSpaceId,
+                  spaces: state.spaces.map(entry => ({
+                    id: entry.id,
+                    name: spaceLabel(entry),
+                    cards: state.tasks.filter(task => task.spaceId === entry.id).length,
+                  })),
+                  counts,
+                  tasks: tasks.map(task => compact(task, index.get(task.automation?.scheduleId))),
+                }
+              }
+              case 'spaces': {
+                const state = board.list()
+                return {
+                  ok: true,
+                  activeSpaceId: state.activeSpaceId,
+                  spaces: state.spaces.map(entry => ({
+                    id: entry.id,
+                    name: spaceLabel(entry),
+                    cards: state.tasks.filter(task => task.spaceId === entry.id).length,
+                  })),
+                }
+              }
+              case 'addSpace': {
+                const result = board.addSpace(args?.name || args?.title)
+                if (!result.ok) return fail(result.error)
+                await board.flushNow()
+                return { ok: true, activeSpaceId: board.activeSpaceId, space: { id: result.space.id, name: spaceLabel(result.space) } }
               }
               case 'update': {
                 const task = board.find(id)
@@ -848,6 +919,7 @@ export function apply(ctx) {
                   ok: true,
                   id: task.id,
                   title: task.title,
+                  spaceId: task.spaceId,
                   column: task.column,
                   progress: task.progress,
                   sessionId: task.sessionId,
@@ -871,7 +943,7 @@ export function apply(ctx) {
         ctx.get('systemPrompt')?.section({
           name: 'task-board',
           order: 60,
-          text: 'The user keeps a kanban task board in the sidebar. When they ask to put a task on the board, check the board, or start a card, use the task_board tool rather than inventing another format. A card can also repeat automatically: pass the automation parameter when adding or updating it. To run a card in a particular workspace, pass that workspace id, path, or title as the workspace parameter.',
+          text: 'The user keeps a kanban task board in the sidebar. When they ask to put a task on the board, check the board, or start a card, use the task_board tool rather than inventing another format. A card can also repeat automatically: pass the automation parameter when adding or updating it. To run a card in a particular workspace, pass that workspace id, path, or title as the workspace parameter. The board is split into spaces and each space is isolated: add and list default to the active space, pass the space parameter (id or name) to target another one, and use action "spaces" or "addSpace" to inspect or create spaces.',
         }),
       'task-board: prompt section',
     )
@@ -898,6 +970,7 @@ function compact(task, runtime) {
     title: task.title,
     note: task.note,
     tag: task.tag,
+    spaceId: task.spaceId,
     column: task.column,
     progress: task.progress,
     phase: task.phase,

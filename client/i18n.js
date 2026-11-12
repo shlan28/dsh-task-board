@@ -124,6 +124,19 @@ const zh = {
   'Automation resumed': '自动化已启用',
   'Automation paused': '自动化已暂停',
   'Automation removed': '自动化已取消',
+  'Default space': '默认空间',
+  'Switch space': '切换空间',
+  'Spaces': '空间',
+  'Space name': '空间名称',
+  'New space': '新建空间',
+  'Create space': '创建空间',
+  'Delete space': '删除空间',
+  'e.g. Work': '例如：工作',
+  'Cards in different spaces stay separate.': '不同空间的卡片互不干扰，切换空间后只看得到当前空间的任务。',
+  'Space created': '空间已创建',
+  'Space deleted': '空间已删除',
+  'Delete the space {name}?': '确定删除空间「{name}」？',
+  'Its {n} cards move to the default space.': '这个空间里的 {n} 张卡片会移到默认空间，不会丢失。',
 }
 
 const en = {
@@ -247,6 +260,19 @@ const en = {
   'Automation resumed': 'Automation resumed',
   'Automation paused': 'Automation paused',
   'Automation removed': 'Automation removed',
+  'Default space': 'Default space',
+  'Switch space': 'Switch space',
+  'Spaces': 'Spaces',
+  'Space name': 'Space name',
+  'New space': 'New space',
+  'Create space': 'Create space',
+  'Delete space': 'Delete space',
+  'e.g. Work': 'e.g. Work',
+  'Cards in different spaces stay separate.': 'Cards in different spaces stay separate; switching shows only that space.',
+  'Space created': 'Space created',
+  'Space deleted': 'Space deleted',
+  'Delete the space {name}?': 'Delete the space {name}?',
+  'Its {n} cards move to the default space.': 'Its {n} cards move to the default space.',
 }
 
 let appCtx = null

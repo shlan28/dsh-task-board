@@ -3,9 +3,11 @@ import React from 'react'
 import { formatDateTime, formatRelative, getClientContext, localeId, useT } from './i18n.js'
 import {
   IconChat,
+  IconChevron,
   IconClock,
   IconExternal,
   IconFolder,
+  IconLayers,
   IconPlay,
   IconPlus,
   IconRefresh,
@@ -17,7 +19,23 @@ import {
   IconX,
 } from './icons.jsx'
 import css from './styles.css'
-import { actions, closeDetail, closeDialog, notify, openAddDialog, openDetail, refresh, setFilter, setQuery, setState, useBoardState } from './store.js'
+import {
+  actions,
+  closeDetail,
+  closeDialog,
+  DEFAULT_SPACE_ID,
+  notify,
+  openAddDialog,
+  openDetail,
+  openRemoveSpaceDialog,
+  openSpaceDialog,
+  refresh,
+  selectSpace,
+  setFilter,
+  setQuery,
+  setState,
+  useBoardState,
+} from './store.js'
 import { IconButton, Modal, ProgressDots, StatusPill, Toast } from './ui.jsx'
 
 const COLUMN_META = {
@@ -96,6 +114,212 @@ function baseName(value) {
 function workspaceLabel(workspace) {
   if (!workspace) return ''
   return workspace.title || baseName(workspace.path)
+}
+
+/** 空间展示名：默认空间没有存名字，按界面语言显示。 */
+function spaceName(space, t) {
+  if (!space || space.id === DEFAULT_SPACE_ID) return t('Default space')
+  return space.name || t('Default space')
+}
+
+/** 页头的空间下拉：当前空间、各空间卡片数、新建与删除入口。 */
+function SpaceMenu({ t, spaces, activeSpaceId, counts }) {
+  const [open, setOpen] = React.useState(false)
+  const ref = React.useRef(null)
+  React.useEffect(() => {
+    if (!open) return undefined
+    const onPointerDown = event => {
+      if (ref.current?.contains(event.target)) return
+      setOpen(false)
+    }
+    const onKeyDown = event => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open])
+
+  const list = spaces.length ? spaces : [{ id: DEFAULT_SPACE_ID, name: '', order: 0 }]
+  const active = list.find(space => space.id === activeSpaceId) || list[0]
+  const countOf = space => Number(counts?.[space.id]) || 0
+  const pick = space => {
+    setOpen(false)
+    if (space.id !== active.id) selectSpace(space.id)
+  }
+
+  return React.createElement(
+    'div',
+    { className: 'tb-space', ref },
+    React.createElement(
+      'button',
+      {
+        type: 'button',
+        className: `tb-space-btn ${open ? 'is-open' : ''}`,
+        title: t('Switch space'),
+        'aria-haspopup': 'menu',
+        'aria-expanded': open,
+        onClick: () => setOpen(value => !value),
+      },
+      React.createElement(IconLayers, { size: 15 }),
+      React.createElement('span', { className: 'tb-space-name' }, spaceName(active, t)),
+      React.createElement('span', { className: 'tb-space-count' }, countOf(active)),
+      React.createElement(IconChevron, { size: 13, className: 'tb-space-caret' }),
+    ),
+    open
+      ? React.createElement(
+          'div',
+          { className: 'tb-space-menu', role: 'menu', 'aria-label': t('Spaces') },
+          list.map(space =>
+            React.createElement(
+              'div',
+              {
+                key: space.id,
+                role: 'menuitemradio',
+                'aria-checked': space.id === active.id,
+                tabIndex: 0,
+                className: `tb-space-item ${space.id === active.id ? 'is-on' : ''}`,
+                onClick: () => pick(space),
+                onKeyDown: event => {
+                  if (event.target !== event.currentTarget) return
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    pick(space)
+                  }
+                },
+              },
+              React.createElement('span', { className: 'tb-space-item-name' }, spaceName(space, t)),
+              React.createElement('span', { className: 'tb-space-item-count' }, countOf(space)),
+              space.id === DEFAULT_SPACE_ID
+                ? null
+                : React.createElement(
+                    'button',
+                    {
+                      type: 'button',
+                      className: 'tb-space-del',
+                      title: t('Delete space'),
+                      'aria-label': t('Delete space'),
+                      onClick: event => {
+                        event.stopPropagation()
+                        setOpen(false)
+                        openRemoveSpaceDialog(space.id)
+                      },
+                    },
+                    React.createElement(IconTrash, { size: 13 }),
+                  ),
+            ),
+          ),
+          React.createElement('div', { className: 'tb-space-sep' }),
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'tb-space-new',
+              onClick: () => {
+                setOpen(false)
+                openSpaceDialog()
+              },
+            },
+            React.createElement(IconPlus, { size: 14 }),
+            t('New space'),
+          ),
+        )
+      : null,
+  )
+}
+
+function SpaceDialog({ t }) {
+  const [name, setName] = React.useState('')
+  const [busy, setBusy] = React.useState(false)
+  const inputRef = React.useRef(null)
+  React.useEffect(() => {
+    inputRef.current?.focus()
+  }, [])
+
+  const submit = async event => {
+    event.preventDefault()
+    const value = name.trim()
+    if (!value || busy) return
+    setBusy(true)
+    const result = await actions.addSpace(value)
+    setBusy(false)
+    if (result) {
+      closeDialog()
+      notify(t('Space created'))
+    }
+  }
+
+  return React.createElement(
+    'form',
+    { className: 'tb-form', onSubmit: submit },
+    React.createElement(
+      'label',
+      { className: 'tb-field' },
+      React.createElement('span', null, t('Space name')),
+      React.createElement('input', {
+        ref: inputRef,
+        value: name,
+        required: true,
+        maxLength: 60,
+        placeholder: t('e.g. Work'),
+        onChange: event => setName(event.target.value),
+      }),
+    ),
+    React.createElement('p', { className: 'tb-hint' }, t('Cards in different spaces stay separate.')),
+    React.createElement(
+      'div',
+      { className: 'tb-dialog-foot' },
+      React.createElement('button', { type: 'button', className: 'tb-btn', onClick: closeDialog }, t('Cancel')),
+      React.createElement('span', { className: 'tb-spacer' }),
+      React.createElement(
+        'button',
+        { type: 'submit', className: 'tb-btn is-primary', disabled: busy || !name.trim() },
+        t('Create space'),
+      ),
+    ),
+  )
+}
+
+function RemoveSpaceDialog({ t, space, count }) {
+  const [busy, setBusy] = React.useState(false)
+  const remove = async () => {
+    if (busy) return
+    setBusy(true)
+    const result = await actions.removeSpace(space.id)
+    setBusy(false)
+    if (result) {
+      closeDialog()
+      notify(t('Space deleted'))
+    }
+  }
+  return React.createElement(
+    Modal,
+    {
+      title: t('Delete space'),
+      onClose: closeDialog,
+      width: 440,
+      footer: React.createElement(
+        React.Fragment,
+        null,
+        React.createElement('button', { type: 'button', className: 'tb-btn', onClick: closeDialog }, t('Cancel')),
+        React.createElement('span', { className: 'tb-spacer' }),
+        React.createElement(
+          'button',
+          { type: 'button', className: 'tb-btn is-danger', disabled: busy, onClick: remove },
+          t('Delete space'),
+        ),
+      ),
+    },
+    React.createElement(
+      'div',
+      { className: 'tb-confirm' },
+      React.createElement('p', { className: 'tb-muted' }, t('Delete the space {name}?', { name: spaceName(space, t) })),
+      React.createElement('p', { className: 'tb-muted' }, t('Its {n} cards move to the default space.', { n: count })),
+    ),
+  )
 }
 
 function AutomationFields({ t, value, onChange }) {
@@ -323,7 +547,7 @@ function Card({ task, t }) {
   )
 }
 
-function Column({ column, tasks, total, t }) {
+function Column({ column, tasks, total, t, spaceId }) {
   const meta = COLUMN_META[column]
   const [over, setOver] = React.useState(false)
   return React.createElement(
@@ -359,7 +583,7 @@ function Column({ column, tasks, total, t }) {
             icon: IconTrash,
             label: t('Clear done'),
             onClick: async () => {
-              const result = await actions.clearDone()
+              const result = await actions.clearDone(spaceId)
               if (result) notify(t('Done cards cleared'))
             },
           })
@@ -375,7 +599,7 @@ function Column({ column, tasks, total, t }) {
   )
 }
 
-function Header({ t, tasks, query, filter }) {
+function Header({ t, tasks, query, filter, spaces, activeSpaceId, spaceCounts }) {
   const now = new Date()
   const locale = localeId()
   let month = ''
@@ -451,6 +675,7 @@ function Header({ t, tasks, query, filter }) {
           ),
         ),
       ),
+      React.createElement(SpaceMenu, { t, spaces, activeSpaceId, counts: spaceCounts }),
       React.createElement(
         'button',
         { type: 'button', className: 'tb-primary', onClick: () => openAddDialog('todo') },
@@ -461,7 +686,7 @@ function Header({ t, tasks, query, filter }) {
   )
 }
 
-function AddDialog({ t, defaultColumn, tags, workspaces }) {
+function AddDialog({ t, defaultColumn, tags, workspaces, spaceId }) {
   const [title, setTitle] = React.useState('')
   const [note, setNote] = React.useState('')
   const [tag, setTag] = React.useState('')
@@ -487,6 +712,7 @@ function AddDialog({ t, defaultColumn, tags, workspaces }) {
       note,
       tag,
       column,
+      spaceId,
       workspaceId: picked?.id ?? null,
       workspacePath: picked?.path ?? null,
       workspaceTitle: picked?.title ?? null,
@@ -1026,23 +1252,46 @@ export function BoardPanel() {
     return () => observer.disconnect()
   }, [])
 
+  const spaces = state.spaces.length ? state.spaces : [{ id: DEFAULT_SPACE_ID, name: '', order: 0 }]
+  const activeSpaceId = spaces.some(space => space.id === state.activeSpaceId) ? state.activeSpaceId : spaces[0].id
+  const spaceTasks = state.tasks.filter(task => (task.spaceId || DEFAULT_SPACE_ID) === activeSpaceId)
+  const spaceCounts = {}
+  for (const task of state.tasks) {
+    const id = task.spaceId || DEFAULT_SPACE_ID
+    spaceCounts[id] = (spaceCounts[id] || 0) + 1
+  }
+
   const detailTask = state.detailId ? state.tasks.find(task => task.id === state.detailId) : null
-  const tags = [...new Set(state.tasks.map(task => task.tag).filter(Boolean))]
+  const tags = [...new Set(spaceTasks.map(task => task.tag).filter(Boolean))]
   const query = state.query.trim().toLowerCase()
 
-  const visible = state.tasks.filter(task => {
+  const visible = spaceTasks.filter(task => {
     if (state.filter === 'active' && task.column !== 'doing') return false
     if (state.filter === 'review' && task.column !== 'review') return false
     if (!query) return true
     return [task.title, task.note, task.tag, task.workspaceTitle].some(value => String(value || '').toLowerCase().includes(query))
   })
 
+  const dialogKind = state.dialog?.kind || 'task'
+  const removeSpaceTarget = dialogKind === 'remove-space' ? spaces.find(space => space.id === state.dialog.id) : null
+  const removeSpaceCount = removeSpaceTarget
+    ? state.tasks.filter(task => (task.spaceId || DEFAULT_SPACE_ID) === removeSpaceTarget.id).length
+    : 0
+
   return React.createElement(
     'div',
     { className: `tb-root ${width < 980 ? 'is-narrow' : ''}`, ref: rootRef },
     React.createElement('style', null, css),
     React.createElement('div', { className: 'tb-ambient', 'aria-hidden': 'true' }, React.createElement('i'), React.createElement('i'), React.createElement('i')),
-    React.createElement(Header, { t, tasks: state.tasks, query: state.query, filter: state.filter }),
+    React.createElement(Header, {
+      t,
+      tasks: spaceTasks,
+      query: state.query,
+      filter: state.filter,
+      spaces,
+      activeSpaceId,
+      spaceCounts,
+    }),
     state.error && !state.loaded
       ? React.createElement(
           'div',
@@ -1061,15 +1310,35 @@ export function BoardPanel() {
               { className: 'tb-board' },
               state.columns.map(column => {
                 const tasks = visible.filter(task => task.column === column)
-                const total = state.tasks.filter(task => task.column === column).length
-                return React.createElement(Column, { key: column, column, tasks, total, t })
+                const total = spaceTasks.filter(task => task.column === column).length
+                return React.createElement(Column, { key: column, column, tasks, total, t, spaceId: activeSpaceId })
               }),
             ),
-            state.tasks.length > 0 && visible.length === 0
+            spaceTasks.length > 0 && visible.length === 0
               ? React.createElement('p', { className: 'tb-none' }, t('Nothing matches this filter.'))
               : null,
           ),
-    state.dialog ? React.createElement(Modal, { title: t('New task'), onClose: closeDialog, width: 520 }, React.createElement(AddDialog, { t, defaultColumn: state.dialog.column, tags, workspaces: state.workspaces })) : null,
+    dialogKind === 'task' && state.dialog
+      ? React.createElement(
+          Modal,
+          { title: t('New task'), onClose: closeDialog, width: 520 },
+          React.createElement(AddDialog, {
+            t,
+            defaultColumn: state.dialog.column,
+            tags,
+            workspaces: state.workspaces,
+            spaceId: activeSpaceId,
+          }),
+        )
+      : null,
+    state.dialog && dialogKind === 'space'
+      ? React.createElement(
+          Modal,
+          { title: t('New space'), onClose: closeDialog, width: 440 },
+          React.createElement(SpaceDialog, { t }),
+        )
+      : null,
+    removeSpaceTarget ? React.createElement(RemoveSpaceDialog, { t, space: removeSpaceTarget, count: removeSpaceCount }) : null,
     detailTask ? React.createElement(DetailSheet, { task: detailTask, t, workspaces: state.workspaces }) : null,
     React.createElement(Toast, { toast: state.toast, onClose: () => setState({ toast: null }) }),
   )
