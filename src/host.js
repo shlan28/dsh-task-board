@@ -2,7 +2,9 @@
 import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, isAbsolute, join } from 'node:path'
-import { Board, COLUMNS, DEFAULT_SPACE_ID, normalizeClock } from './board.js'
+import { Board, COLUMNS, DEFAULT_SPACE_ID, EXECUTORS, normalizeClock } from './board.js'
+import { CodexAgent } from './codex.js'
+import { RruleError, nextOccurrence } from './rrule.js'
 
 const MAX_JSON = 1_000_000
 const PANEL_PATH = '/task-board'
@@ -145,7 +147,18 @@ export const inject = ['webServer']
 
 export function apply(ctx) {
   const board = new Board(join(dshHome(), 'task-board'), { log: (...args) => ctx.logger?.warn?.(...args) })
-  const ready = board.load()
+  const log = (...args) => ctx.logger?.warn?.(...args)
+  let ticking = false
+
+  const boardRoot = join(dshHome(), 'task-board')
+  const codex = new CodexAgent({
+    root: boardRoot,
+    log,
+    board,
+    buildPrompt: task => buildPrompt(task),
+    workDirFor: task => workspaceOf(task)?.path || boardDirectory(),
+  })
+  const ready = Promise.all([board.load(), codex.load()]).then(() => undefined)
   const inflight = new Set()
 
   /** 空间展示名：默认空间没有存名字，统一用中文名给工具和日志用。 */
@@ -298,11 +311,21 @@ export function apply(ctx) {
     }
   }
 
-  /** 派发一张卡：没有会话就新建，然后把提示词塞进那个会话。 */
+  /** 派发一张卡：Codex 卡走 ACP 运行队列，DSH 卡新建/复用会话后投递提示词。 */
   async function dispatch(task, options = {}) {
     if (!task) return { ok: false, error: '任务不存在' }
     await ready
     if (inflight.has(task.id)) return { ok: false, error: '这张卡正在派发中' }
+    if (task.executor === 'codex') {
+      if (options.sessionId) return { ok: false, error: 'Codex 卡不能在当前会话里执行' }
+      inflight.add(task.id)
+      try {
+        const result = await codex.start(task)
+        return result.ok ? { ...result, executor: 'codex' } : result
+      } finally {
+        inflight.delete(task.id)
+      }
+    }
     const ctrl = sessionController()
     if (!ctrl) return { ok: false, error: '当前环境没有会话服务，无法派发任务' }
     inflight.add(task.id)
@@ -405,6 +428,9 @@ export function apply(ctx) {
     state.spacesRevision = `${state.activeSpaceId}:${state.spaces
       .map(space => `${space.id}:${space.name}:${space.order}`)
       .join('|')}`
+    state.agent = agentSnapshot()
+    const agentStatus = state.agent.status
+    state.agentRevision = `${agentStatus.state}:${agentStatus.checkedAt}:${state.agent.config.model}:${state.agent.config.permissionMode}:${state.agent.config.codexPath}:${state.agent.config.adapterCommand}`
     if (!index.size) return state
     state.tasks = state.tasks.map(task => {
       if (!task.automation?.scheduleId) return task
@@ -489,9 +515,43 @@ export function apply(ctx) {
     Boolean(input && typeof input === 'object') &&
     (typeof input.rrule === 'string' || typeof input.frequency === 'string' || typeof input.time === 'string' || Array.isArray(input.weekdays))
 
+  /** 规则 → 下一次执行；不支持的规则返回 error。 */
+  function nextAtFor(rrule, zone, after = Date.now()) {
+    try {
+      const at = nextOccurrence(rrule, after, zone)
+      return { at: at ?? null, error: '' }
+    } catch (error) {
+      return { at: null, error: error instanceof RruleError ? error.message : messageOf(error) }
+    }
+  }
+
+  /** Codex 卡的自动化：规则存在卡片里，由插件自己到点触发。 */
+  function createBoardAutomation(task, input, options = {}) {
+    const spec = buildRrule(input)
+    const calc = nextAtFor(spec.rrule, spec.timeZone)
+    if (!calc.at) return { ok: false, error: calc.error || '规则算不出下一次执行时间' }
+    board.setAutomation(task.id, {
+      engine: 'board',
+      scheduleId: '',
+      rrule: spec.rrule,
+      frequency: spec.frequency,
+      time: spec.time,
+      weekdays: spec.weekdays,
+      timeZone: spec.timeZone,
+      active: options.active !== false,
+      nextAt: calc.at,
+      lastFiredAt: options.lastFiredAt ?? null,
+      targetPath: '',
+      reservedSessionId: null,
+      error: '',
+    })
+    return { ok: true }
+  }
+
   /**
    * 处理 add/update 里的 automation：
-   * 缺省表示「没改规则」，只同步标题与提示词；frequency=none 表示取消自动化。
+   * 缺省表示「没改规则」；frequency=none 表示取消自动化。
+   * Codex 卡用插件内调度（engine: board），DSH 卡沿用宿主 schedule。
    */
   async function applyAutomation(task, input, sessionId) {
     const existing = task.automation
@@ -504,33 +564,67 @@ export function apply(ctx) {
       board.setAutomation(task.id, null)
       return {}
     }
-    if (!existing?.scheduleId) {
+    const engine = task.executor === 'codex' ? 'board' : 'dsh'
+    if (!existing) {
       if (!hasTiming(input)) return {}
+      if (engine === 'board') {
+        const result = createBoardAutomation(task, input)
+        return result.ok ? {} : { warning: `自动化没有生效：${result.error}` }
+      }
       const result = await attachAutomation(task, input, sessionId)
       return result.ok ? {} : { warning: `自动化没有生效：${result.error}` }
     }
-    const spec = hasTiming(input) ? buildRrule(input) : null
-    const targetPath = workspaceOf(task)?.path || ''
-    const patch = { title: scheduleTitle(task), prompt: buildPrompt(task) }
-    if (spec && spec.rrule !== existing.rrule) patch.timing = { kind: 'rrule', rrule: spec.rrule }
-    // 换了工作区：下一次投递要在新目录里建会话，定时任务的目标也要跟着改。
-    const retarget = Boolean(targetPath && targetPath !== (existing.targetPath || ''))
-    if (retarget) patch.target = { kind: 'new_once', create: { cwd: targetPath } }
-    const active = typeof input?.active === 'boolean' ? input.active : existing.active
-    if (active !== existing.active) patch.active = active
-    const result = await editSchedule(existing.scheduleId, patch)
-    if (!result.ok) return { warning: `自动化任务没有更新：${result.error}` }
-    const reserved = retarget && result.entry?.target?.kind === 'new_once' ? String(result.entry.target.sessionId) : ''
-    board.setAutomation(task.id, {
-      ...existing,
-      ...(spec && spec.rrule !== existing.rrule
-        ? { rrule: spec.rrule, frequency: spec.frequency, time: spec.time, weekdays: spec.weekdays, timeZone: spec.timeZone }
-        : {}),
-      ...(retarget ? { targetPath, reservedSessionId: reserved || existing.reservedSessionId } : {}),
-      active,
-      error: '',
-    })
-    return {}
+    if (existing.engine === 'board' && engine === 'board') {
+      const spec = hasTiming(input) ? buildRrule(input) : null
+      const active = typeof input?.active === 'boolean' ? input.active : existing.active
+      let nextAt = existing.nextAt || null
+      if (spec) {
+        const calc = nextAtFor(spec.rrule, spec.timeZone)
+        if (!calc.at) return { warning: `自动化没有更新：${calc.error || '规则算不出下一次执行时间'}` }
+        nextAt = calc.at
+      }
+      if (active && (!nextAt || nextAt <= Date.now())) {
+        const calc = nextAtFor(spec?.rrule || existing.rrule, spec?.timeZone || existing.timeZone)
+        nextAt = calc.at || null
+      }
+      board.setAutomation(task.id, {
+        ...existing,
+        engine: 'board',
+        ...(spec
+          ? { rrule: spec.rrule, frequency: spec.frequency, time: spec.time, weekdays: spec.weekdays, timeZone: spec.timeZone }
+          : {}),
+        active,
+        nextAt,
+        error: '',
+      })
+      return {}
+    }
+    if (existing.engine !== 'board' && engine === 'dsh') {
+      const spec = hasTiming(input) ? buildRrule(input) : null
+      const targetPath = workspaceOf(task)?.path || ''
+      const patch = { title: scheduleTitle(task), prompt: buildPrompt(task) }
+      if (spec && spec.rrule !== existing.rrule) patch.timing = { kind: 'rrule', rrule: spec.rrule }
+      // 换了工作区：下一次投递要在新目录里建会话，定时任务的目标也要跟着改。
+      const retarget = Boolean(targetPath && targetPath !== (existing.targetPath || ''))
+      if (retarget) patch.target = { kind: 'new_once', create: { cwd: targetPath } }
+      const active = typeof input?.active === 'boolean' ? input.active : existing.active
+      if (active !== existing.active) patch.active = active
+      const result = await editSchedule(existing.scheduleId, patch)
+      if (!result.ok) return { warning: `自动化任务没有更新：${result.error}` }
+      const reserved = retarget && result.entry?.target?.kind === 'new_once' ? String(result.entry.target.sessionId) : ''
+      board.setAutomation(task.id, {
+        ...existing,
+        ...(spec && spec.rrule !== existing.rrule
+          ? { rrule: spec.rrule, frequency: spec.frequency, time: spec.time, weekdays: spec.weekdays, timeZone: spec.timeZone }
+          : {}),
+        ...(retarget ? { targetPath, reservedSessionId: reserved || existing.reservedSessionId } : {}),
+        active,
+        error: '',
+      })
+      return {}
+    }
+    // 执行者换了但自动化还没迁移：返回提示，由 switchExecutor 负责迁移。
+    return { warning: '自动化需要先随执行者一起迁移，请重新保存规则' }
   }
 
   /**
@@ -539,8 +633,19 @@ export function apply(ctx) {
    */
   async function syncAutomationByColumn(task) {
     const automation = task?.automation
-    if (!automation?.scheduleId) return ''
+    if (!automation) return ''
     const shouldRun = task.column !== 'done'
+    if (automation.engine === 'board') {
+      if ((automation.active !== false) === shouldRun) return ''
+      let nextAt = automation.nextAt || null
+      if (shouldRun) {
+        const calc = nextAtFor(automation.rrule, automation.timeZone)
+        nextAt = calc.at || nextAt
+      }
+      board.setAutomation(task.id, { ...automation, active: shouldRun, nextAt })
+      return ''
+    }
+    if (!automation.scheduleId) return ''
     if ((automation.active !== false) === shouldRun) return ''
     const result = await editSchedule(automation.scheduleId, { active: shouldRun })
     if (!result.ok) return `自动化没有${shouldRun ? '恢复' : '暂停'}：${result.error}`
@@ -548,10 +653,141 @@ export function apply(ctx) {
     return ''
   }
 
+  /** 执行者切换时迁移自动化：DSH 定时任务 ⇄ 插件内调度。 */
+  async function migrateExecutor(task, next) {
+    const automation = task.automation
+    if (!automation) return { ok: true }
+    if (next === 'codex') {
+      if (automation.engine === 'board') return { ok: true }
+      if (!automation.rrule) return { ok: false, error: '这张卡的自动化缺少重复规则，无法切到 Codex' }
+      const calc = nextAtFor(automation.rrule, automation.timeZone)
+      if (!calc.at) return { ok: false, error: `这张卡的重复规则暂不支持 Codex 调度：${calc.error || '算不出下一次执行时间'}` }
+      if (automation.scheduleId) {
+        const removed = await deleteSchedule(automation.scheduleId)
+        if (!removed.ok) return { ok: false, error: `DSH 定时任务没有删除：${removed.error}` }
+      }
+      board.setAutomation(task.id, {
+        engine: 'board',
+        scheduleId: '',
+        rrule: automation.rrule,
+        frequency: automation.frequency,
+        time: automation.time,
+        weekdays: automation.weekdays,
+        timeZone: automation.timeZone,
+        active: automation.active,
+        nextAt: calc.at,
+        lastFiredAt: automation.lastFiredAt,
+        targetPath: '',
+        reservedSessionId: null,
+        error: '',
+      })
+      return { ok: true }
+    }
+    if (automation.engine === 'dsh') return { ok: true }
+    if (!automation.rrule) return { ok: false, error: '自动化缺少重复规则，无法交给 DSH 定时任务' }
+    const spec = {
+      rrule: automation.rrule,
+      frequency: automation.frequency,
+      time: automation.time,
+      weekdays: automation.weekdays,
+      timeZone: automation.timeZone,
+    }
+    const created = await createSchedule(task, spec, '')
+    if (!created.ok) return { ok: false, error: created.error }
+    const entry = created.entry ?? {}
+    if (automation.active === false) await editSchedule(entry.id, { active: false })
+    board.setAutomation(task.id, {
+      ...automation,
+      engine: 'dsh',
+      scheduleId: String(entry.id ?? ''),
+      targetPath: created.cwd || '',
+      reservedSessionId: entry.target?.kind === 'new_once' ? String(entry.target.sessionId) : null,
+      nextAt: null,
+      error: '',
+    })
+    return { ok: true }
+  }
+
+  /** 切换卡片执行者：运行中拒绝；Codex 不可用拒绝；顺带迁移自动化。 */
+  async function switchExecutor(task, next) {
+    if (!EXECUTORS.has(next)) return { ok: false, error: `未知执行者：${next}` }
+    if (task.executor === next) return { ok: true }
+    if (task.running) return { ok: false, error: '这张卡正在执行，结束或停止后再换执行者' }
+    if (next === 'codex') {
+      const status = await codex.detect()
+      if (status.state !== 'ready') return { ok: false, error: `Codex 暂不可用：${status.message}` }
+    }
+    const migrated = await migrateExecutor(task, next)
+    if (!migrated.ok) return migrated
+    board.update(task.id, { executor: next, sessionId: null, codex: null })
+    await board.flushNow()
+    return { ok: true }
+  }
+
+  /** 插件内调度的 Codex 自动化：到点交给运行队列，然后算下一次。 */
+  async function automationTick() {
+    if (ticking) return
+    ticking = true
+    try {
+      await ready
+      const now = Date.now()
+      for (const task of [...board.tasks]) {
+        const automation = task.automation
+        if (!automation || automation.engine !== 'board' || automation.active === false) continue
+        if (task.executor !== 'codex' || task.column === 'done') continue
+        if (codex.isBusy(task.id)) continue
+        let nextAt = automation.nextAt || null
+        if (!nextAt) {
+          const calc = nextAtFor(automation.rrule, automation.timeZone)
+          board.setAutomation(task.id, { ...automation, nextAt: calc.at, error: calc.error || '' })
+          continue
+        }
+        if (nextAt > now) continue
+        board.setAutomation(task.id, { ...automation, error: '' })
+        const result = await codex.start(task)
+        if (!result.ok) {
+          board.setAutomation(task.id, { ...board.find(task.id)?.automation, error: `Codex 没有启动：${result.error}` })
+          await board.flushNow()
+          continue
+        }
+        const calc = nextAtFor(automation.rrule, automation.timeZone, now + 1_000)
+        board.setAutomation(task.id, {
+          ...board.find(task.id)?.automation,
+          nextAt: calc.at,
+          lastFiredAt: now,
+          error: calc.error || '',
+        })
+        await board.flushNow()
+      }
+    } catch (error) {
+      log('task-board: 自动化 tick 失败', error)
+    } finally {
+      ticking = false
+    }
+  }
+
+  /** 启动时接管：子进程已不在的 Codex 卡标成中断，再开始检测与调度。 */
+  async function bootCodex() {
+    await ready
+    let changed = false
+    for (const task of board.tasks) {
+      if (task.executor === 'codex' && task.running) {
+        board.interruptCodex(task.id)
+        changed = true
+      }
+    }
+    if (changed) await board.flushNow()
+    codex.detect({ force: true }).catch(error => log('task-board: Codex 检测失败', error))
+    await automationTick()
+  }
+
+  const agentSnapshot = () => ({ status: codex.statusSnapshot(), config: codex.configSnapshot() })
+
   /** 立即执行一张卡：自动化卡走定时任务投递，普通卡走会话派发。 */
   async function runNow(task) {
     if (!task) return { ok: false, error: '任务不存在' }
     await ready
+    if (task.executor === 'codex') return dispatch(task, {})
     const scheduleId = task.automation?.scheduleId
     const service = scheduleService()
     if (!scheduleId || typeof service?.run !== 'function') return dispatch(task, {})
@@ -571,7 +807,12 @@ export function apply(ctx) {
   }
 
   async function stop(task) {
-    if (!task?.sessionId) return { ok: false, error: '这张卡还没有会话' }
+    if (!task) return { ok: false, error: '任务不存在' }
+    if (task.executor === 'codex') {
+      await ready
+      return codex.stop(task.id)
+    }
+    if (!task.sessionId) return { ok: false, error: '这张卡还没有会话' }
     const ctrl = sessionController()
     if (!ctrl) return { ok: false, error: '当前环境没有会话服务' }
     try {
@@ -652,6 +893,7 @@ export function apply(ctx) {
       case 'add': {
         const space = spaceBy(body.spaceId)
         if (!space) return fail('空间不存在')
+        if (body?.executor !== undefined && !EXECUTORS.has(body.executor)) return fail(`未知执行者：${body.executor}`)
         let workspace = null
         if (hasWorkspaceInput(body)) {
           const picked = typeof body.workspace === 'string' ? await settleWorkspaceText(body.workspace) : await settleWorkspace(body)
@@ -670,6 +912,10 @@ export function apply(ctx) {
       case 'update': {
         const task = board.find(id)
         if (!task) return fail('任务不存在')
+        if (body?.executor !== undefined && body.executor !== task.executor) {
+          const switched = await switchExecutor(task, body.executor)
+          if (!switched.ok) return fail(switched.error)
+        }
         if (hasWorkspaceInput(body)) {
           const picked = typeof body.workspace === 'string' ? await settleWorkspaceText(body.workspace) : await settleWorkspace(body)
           if (!picked.ok) return fail(picked.error)
@@ -695,6 +941,7 @@ export function apply(ctx) {
       case 'remove': {
         const task = board.find(id)
         if (!task) return fail('任务不存在')
+        if (task.executor === 'codex' && codex.isBusy(task.id)) codex.stop(task.id)
         if (task.automation?.scheduleId) {
           const result = await deleteSchedule(task.automation.scheduleId)
           if (!result.ok) return fail(`自动化任务没有删除：${result.error}`)
@@ -743,6 +990,20 @@ export function apply(ctx) {
         const result = await stop(board.find(id))
         return { ...result, state: await snapshot() }
       }
+      case 'agentDetect': {
+        await codex.detect({ force: true })
+        return { ok: true, agent: agentSnapshot(), state: await snapshot() }
+      }
+      case 'agentTest': {
+        const result = await codex.test()
+        return { ...result, agent: agentSnapshot(), state: await snapshot() }
+      }
+      case 'agentSave': {
+        const saved = await codex.saveConfig(body?.config)
+        if (!saved.ok) return fail(saved.error)
+        await codex.detect({ force: true })
+        return { ok: true, agent: agentSnapshot(), state: await snapshot() }
+      }
       default:
         return fail(`未知操作：${op || '（空）'}`)
     }
@@ -763,7 +1024,7 @@ export function apply(ctx) {
             properties: {
               action: {
                 type: 'string',
-                enum: ['add', 'list', 'spaces', 'addSpace', 'update', 'move', 'run', 'result', 'remove'],
+                enum: ['add', 'list', 'spaces', 'addSpace', 'update', 'move', 'run', 'result', 'remove', 'agent'],
                 description: 'Operation to perform.',
               },
               id: { type: 'string', description: 'Card id, from list or add.' },
@@ -778,6 +1039,12 @@ export function apply(ctx) {
               column: { type: 'string', enum: COLUMNS, description: 'Board column.' },
               progress: { type: 'number', description: 'Progress 0-100.' },
               here: { type: 'boolean', description: 'For run: execute in the current session instead of a new one.' },
+              executor: {
+                type: 'string',
+                enum: ['dsh', 'codex'],
+                description:
+                  'For add/update: which executor runs this card. "dsh" (default) dispatches to a DSH session; "codex" runs it with the local Codex agent over ACP.',
+              },
               workspace: {
                 type: 'string',
                 description:
@@ -818,6 +1085,7 @@ export function apply(ctx) {
             switch (action) {
               case 'add': {
                 if (!args?.title) return fail('标题不能为空')
+                if (args?.executor !== undefined && !EXECUTORS.has(args.executor)) return fail(`未知执行者：${args.executor}`)
                 const space = args?.space ? spaceBy(String(args.space)) : board.space()
                 if (!space) return fail(`找不到空间：${args.space}`)
                 const picked = await toolWorkspace(args, actorSessionId)
@@ -875,6 +1143,10 @@ export function apply(ctx) {
               case 'update': {
                 const task = board.find(id)
                 if (!task) return fail('任务不存在')
+                if (args?.executor !== undefined && args.executor !== task.executor) {
+                  const switched = await switchExecutor(task, args.executor)
+                  if (!switched.ok) return fail(switched.error)
+                }
                 if (args?.workspace !== undefined) {
                   const picked = await settleWorkspaceText(args.workspace)
                   if (!picked.ok) return fail(picked.error)
@@ -899,6 +1171,7 @@ export function apply(ctx) {
               case 'remove': {
                 const task = board.find(id)
                 if (!task) return fail('任务不存在')
+                if (task.executor === 'codex' && codex.isBusy(task.id)) codex.stop(task.id)
                 if (task.automation?.scheduleId) {
                   const result = await deleteSchedule(task.automation.scheduleId)
                   if (!result.ok) return fail(`自动化任务没有删除：${result.error}`)
@@ -909,8 +1182,13 @@ export function apply(ctx) {
                 const task = board.find(id)
                 if (!task) return fail('任务不存在')
                 const here = args?.here === true && exec?.agent?.id ? String(exec.agent.id) : ''
+                if (here && task.executor === 'codex') return fail('Codex 卡不能在当前会话里执行')
                 const result = here ? await dispatch(task, { sessionId: here }) : await runNow(task)
                 return { ...result, task: await detailed(board.find(id)) }
+              }
+              case 'agent': {
+                const status = await codex.detect()
+                return { ok: true, agent: { status: { ...status }, config: codex.configSnapshot() } }
               }
               case 'result': {
                 const task = board.find(id)
@@ -923,6 +1201,8 @@ export function apply(ctx) {
                   column: task.column,
                   progress: task.progress,
                   sessionId: task.sessionId,
+                  executor: task.executor,
+                  codex: { ...task.codex },
                   workspaceId: task.workspaceId,
                   workspacePath: task.workspacePath,
                   workspaceTitle: task.workspaceTitle,
@@ -948,19 +1228,35 @@ export function apply(ctx) {
       'task-board: prompt section',
     )
   }
+
+  // Codex：启动恢复 + 插件内自动化的定时检查（DSH 卡仍由宿主 schedule 驱动）。
+  ctx.effect(() => {
+    const tickMs = Math.max(250, Number(process.env.TASK_BOARD_TICK_MS) || 30_000)
+    const timer = setInterval(() => {
+      void automationTick()
+    }, tickMs)
+    timer.unref?.()
+    void bootCodex()
+    return () => {
+      clearInterval(timer)
+      void codex.dispose()
+    }
+  }, 'task-board: codex runtime')
 }
 
 function compactAutomation(automation, runtime) {
   if (!automation) return null
   return {
+    engine: automation.engine,
     scheduleId: automation.scheduleId,
     active: automation.active !== false,
     frequency: automation.frequency,
     time: automation.time,
     weekdays: Array.isArray(automation.weekdays) ? [...automation.weekdays] : [],
     rrule: automation.rrule,
-    nextAt: runtime?.nextAt ?? automation.runtime?.nextAt ?? null,
+    nextAt: runtime?.nextAt ?? automation.nextAt ?? automation.runtime?.nextAt ?? null,
     lastFiredAt: automation.lastFiredAt ?? null,
+    error: automation.error || '',
   }
 }
 
@@ -978,6 +1274,8 @@ function compact(task, runtime) {
     steps: task.steps,
     source: task.source,
     sessionId: task.sessionId,
+    executor: task.executor,
+    codex: { ...task.codex },
     workspaceId: task.workspaceId,
     workspacePath: task.workspacePath,
     workspaceTitle: task.workspaceTitle,

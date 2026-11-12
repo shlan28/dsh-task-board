@@ -10,7 +10,8 @@ export const DEFAULT_SPACE_ID = 'default'
 const DEFAULT_SPACE_NAMES = ['默认空间', 'default space']
 const WEEKDAY_SET = new Set(WEEKDAYS)
 const AUTOMATION_FREQUENCIES = new Set(['hourly', 'daily', 'weekly', 'custom'])
-const FILE_VERSION = 2
+const FILE_VERSION = 3
+export const EXECUTORS = new Set(['dsh', 'codex'])
 
 const clampProgress = (value) => {
   const number = Number(value)
@@ -37,13 +38,15 @@ function normalizeWeekdays(value) {
   return days
 }
 
-/** 卡片上的自动化配置：重复规则、时区、绑定的定时任务与会话。 */
+/** 卡片上的自动化配置：重复规则、时区、引擎（DSH 定时任务 / 插件内调度）。 */
 export function normalizeAutomation(raw) {
   if (!raw || typeof raw !== 'object') return null
   const scheduleId = typeof raw.scheduleId === 'string' ? raw.scheduleId.trim() : ''
   const rrule = text(raw.rrule, 2000)
   if (!scheduleId && !rrule) return null
+  const engine = raw.engine === 'board' || raw.engine === 'dsh' ? raw.engine : rrule && !scheduleId ? 'board' : 'dsh'
   return {
+    engine,
     scheduleId,
     rrule,
     targetPath: text(raw.targetPath, 1024),
@@ -53,8 +56,19 @@ export function normalizeAutomation(raw) {
     timeZone: text(raw.timeZone, 64),
     active: raw.active !== false,
     reservedSessionId: typeof raw.reservedSessionId === 'string' && raw.reservedSessionId ? raw.reservedSessionId : null,
+    nextAt: Number(raw.nextAt) || null,
     lastFiredAt: Number(raw.lastFiredAt) || null,
     error: text(raw.error, 500),
+  }
+}
+
+/** Codex 一次运行的附加信息；DSH 卡的这部分为空。 */
+export function normalizeCodex(raw) {
+  return {
+    sessionId: typeof raw?.sessionId === 'string' && raw.sessionId ? raw.sessionId : null,
+    model: typeof raw?.model === 'string' && raw.model ? raw.model : null,
+    stopReason: typeof raw?.stopReason === 'string' && raw.stopReason ? raw.stopReason : null,
+    startedAt: Number(raw?.startedAt) || null,
   }
 }
 
@@ -111,6 +125,8 @@ function normalizeTask(raw, fallbackSpaceId = DEFAULT_SPACE_ID) {
     source: raw?.source === 'session' ? 'session' : 'board',
     createdBy: typeof raw?.createdBy === 'string' ? raw.createdBy : null,
     automation: normalizeAutomation(raw?.automation),
+    executor: EXECUTORS.has(raw?.executor) ? raw.executor : 'dsh',
+    codex: normalizeCodex(raw?.codex),
     result: text(raw?.result, 8000),
     error: text(raw?.error, 2000),
     createdAt: Number(raw?.createdAt) || Date.now(),
@@ -269,6 +285,7 @@ export class Board {
       workspaceId: input?.workspaceId,
       workspacePath: input?.workspacePath,
       workspaceTitle: input?.workspaceTitle,
+      executor: input?.executor,
       spaceId: this.space(input?.spaceId)?.id || this.activeSpaceId,
       order,
       source: meta.source === 'session' ? 'session' : 'board',
@@ -289,6 +306,8 @@ export class Board {
     if (patch.tag !== undefined) task.tag = text(patch.tag, 24)
     if (patch.progress !== undefined) task.progress = clampProgress(patch.progress)
     if (patch.sessionId !== undefined) task.sessionId = text(patch.sessionId, 200) || null
+    if (patch.executor !== undefined && EXECUTORS.has(patch.executor)) task.executor = patch.executor
+    if (patch.codex !== undefined) task.codex = normalizeCodex(patch.codex)
     if (patch.workspaceId !== undefined) task.workspaceId = text(patch.workspaceId, 120) || null
     if (patch.workspacePath !== undefined) task.workspacePath = text(patch.workspacePath, 1024) || null
     if (patch.workspaceTitle !== undefined) task.workspaceTitle = text(patch.workspaceTitle, 200) || null
@@ -382,6 +401,132 @@ export class Board {
     this.tasks = this.tasks.filter(task => !(task.column === 'done' && task.spaceId === target))
     if (this.tasks.length !== before) this.touch()
     return before - this.tasks.length
+  }
+
+  /** Codex 卡进入队列：先放进「进行中」，等运行槽位。 */
+  markCodexQueued(id) {
+    const task = this.find(id)
+    if (!task) return null
+    task.running = true
+    task.column = 'doing'
+    task.progress = 4
+    task.phase = 'queued'
+    task.toolName = ''
+    task.steps = 0
+    task.error = ''
+    task.finishedAt = null
+    task.startedAt = task.startedAt || this.now()
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  markCodexStarted(id, { model = '' } = {}) {
+    const task = this.find(id)
+    if (!task) return null
+    task.running = true
+    task.column = 'doing'
+    task.progress = 6
+    task.phase = 'queued'
+    task.toolName = ''
+    task.steps = 0
+    task.result = ''
+    task.error = ''
+    task.startedAt = this.now()
+    task.finishedAt = null
+    task.codex = normalizeCodex({ model, startedAt: this.now() })
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  attachCodexSession(id, sessionId, model = '') {
+    const task = this.find(id)
+    if (!task) return null
+    task.codex = normalizeCodex({ ...task.codex, sessionId, model, startedAt: task.startedAt })
+    task.phase = 'thinking'
+    task.progress = Math.max(task.progress, 8)
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  codexThought(id) {
+    const task = this.find(id)
+    if (!task || !task.running) return null
+    task.phase = 'thinking'
+    task.progress = Math.max(task.progress, 12)
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  codexTool(id, { name = '' } = {}) {
+    const task = this.find(id)
+    if (!task || !task.running) return null
+    task.steps += 1
+    task.phase = 'tool'
+    task.toolName = text(name, 200) || 'tool'
+    task.progress = Math.max(task.progress, Math.min(86, 26 + task.steps * 7))
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  codexText(id, chunk) {
+    const task = this.find(id)
+    if (!task || !task.running) return null
+    const textValue = typeof chunk === 'string' ? chunk : ''
+    if (textValue) task.result = text(task.result + textValue, 8000)
+    task.phase = 'writing'
+    task.progress = Math.max(task.progress, 88)
+    task.updatedAt = this.now()
+    this.touch()
+    return task
+  }
+
+  /** Codex 一轮结束：completed → 待验收；aborted → 待办；error → 待验收 + 错误。 */
+  finishCodex(id, kind, message = '') {
+    const task = this.find(id)
+    if (!task) return null
+    task.running = false
+    task.finishedAt = this.now()
+    task.updatedAt = this.now()
+    task.codex = normalizeCodex({ ...task.codex, stopReason: kind })
+    if (kind === 'aborted') {
+      task.column = 'todo'
+      task.progress = 0
+      task.phase = 'stopped'
+      task.toolName = ''
+      task.error = ''
+    } else if (kind === 'error') {
+      task.column = 'review'
+      task.progress = 100
+      task.phase = 'error'
+      task.error = text(message, 2000) || 'Codex 运行失败'
+    } else {
+      task.column = 'review'
+      task.progress = 100
+      task.phase = 'review'
+      task.error = ''
+    }
+    this.touch()
+    return task
+  }
+
+  /** 插件重启后，子进程已经不在了。 */
+  interruptCodex(id, message = '插件重启，Codex 运行已中断') {
+    const task = this.find(id)
+    if (!task) return null
+    task.running = false
+    task.column = 'todo'
+    task.progress = 0
+    task.phase = 'error'
+    task.toolName = ''
+    task.error = text(message, 2000)
+    task.updatedAt = this.now()
+    this.touch()
+    return task
   }
 
   markDispatched(id, sessionId) {
