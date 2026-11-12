@@ -5,15 +5,37 @@
 ## 流程
 
 ```bash
+# 官方源和 GitHub 要走本地代理（ClashX 127.0.0.1:7890），见下节
+export HTTPS_PROXY=http://127.0.0.1:7890 HTTP_PROXY=http://127.0.0.1:7890
+
 node scripts/build.mjs                     # 1. 改了 client/ 就重新构建，dist/client.js 要一起提交
 git add -A && git commit -m "feat: ..."     # 2. 提交改动
 npm version patch -m "chore: release %s"    # 3. 版本号 +1 并打 tag（minor / major 同理）
 npm publish                                # 4. 发布，prepublishOnly 会再构建一次
 curl -X PUT -H 'Content-Type: application/json' \
   -d '{"tips":"release <版本号>"}' \
-  https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs   # 5. 触发 npmmirror 同步
+  https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs   # 5. 发布后立刻触发 npmmirror 同步（必须）
 git push --follow-tags                     # 6. 推代码和 tag，GitHub build CI 开始跑
 ```
+
+## 本地代理与缓存
+
+这台开发机访问 `registry.npmjs.org`、GitHub 和部分外网要走本地 ClashX（`127.0.0.1:7890`）。发布前先导出代理，否则 `npm publish` / `npm view` / `git push` 会超时：
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+```
+
+- 只给单条命令带代理：`HTTPS_PROXY=http://127.0.0.1:7890 npm publish`、`curl -x http://127.0.0.1:7890 ...`、
+  `git -c http.proxy=http://127.0.0.1:7890 push --follow-tags`。
+- 先确认代理在跑：
+  `curl -x http://127.0.0.1:7890 -sS -o /dev/null -w "%{http_code}" https://registry.npmjs.org/dsh-color-task-board`
+  返回 200 即可。
+- `~/.npm` 的日志目录没有写权限时，npm 会在写日志阶段报错退出。统一加 `--cache .npm-cache`
+  （仓库 `.gitignore` 已忽略），例如 `npm --cache .npm-cache publish`、`npm --cache .npm-cache view ...`。
+- **npmmirror 的同步请求是直连的**，不要挂代理；`https://registry.npmmirror.com` 在本机可直连，
+  查询同步结果也不需要代理。
 
 ## 要点
 
@@ -24,7 +46,8 @@ git push --follow-tags                     # 6. 推代码和 tag，GitHub build 
   curl https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs/<id>
   ```
 
-  也可以打开 <https://npmmirror.com/sync/dsh-color-task-board> 手动触发。同步完成的标准是镜像的 `dist-tags.latest` 和 `versions` 里出现新版本：
+  也可以打开 <https://npmmirror.com/sync/dsh-color-task-board> 手动触发。**发布后要立刻同步一次**（不等用户反馈），
+  同步完成的标准是镜像的 `dist-tags.latest` 和 `versions` 里出现新版本：
 
   ```bash
   curl -s https://registry.npmmirror.com/dsh-color-task-board | node -e \
