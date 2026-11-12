@@ -7,6 +7,7 @@
 - DSH `>=0.2.1-rc.5 <0.3.0`
 - Node `>=20`
 - 仓库自带 `dist/client.js`，安装时不需要构建
+- Codex 执行者（可选）：本机 Codex CLI 已安装并登录；首次运行通过 `npx -y @agentclientprotocol/codex-acp` 拉取 ACP 适配器，或预装 `codex-acp` 后在弹窗「高级」里填路径
 
 ## 安装方式
 
@@ -57,7 +58,9 @@ node scripts/build.mjs
 - 页头右上角的空间下拉显示「默认空间」，可以新建空间并在空间之间切换
 - 任意会话里 `task_board` 工具可调用（`list` 返回 `ok: true`）
 - 宿主侧数据接口可用：`GET /task-board/state`（未带鉴权头会返回 401，属正常）
-- 自动化卡片会在 Harness 的「自动化任务」页面出现同名任务（标题形如 `任务看板 · <卡片标题>`）
+- 自动化卡片会在 Harness 的「自动化任务」页面出现同名任务（标题形如 `任务看板 · <卡片标题>`）；Codex 卡的自动化由插件自己调度，**不会**出现在这个页面
+- 页头「新建任务」右侧出现 agent 图标：点开后能显示本机 Codex 路径/版本/登录状态；「测试连接」成功说明 ACP 适配器可用
+- 新建/详情里「执行者」可以切到 Codex (ACP)；Codex 卡的自动化在卡片详情里能看到「下次执行」
 
 ## 更新
 
@@ -66,13 +69,15 @@ node scripts/build.mjs
 
 ## 卸载
 
-插件页卸载 `dsh-color-task-board`。卸载不会删除看板数据，也不会删除已经创建在 DSH 定时任务服务里的自动化任务；需要的话在「自动化任务」页面单独删。
+插件页卸载 `dsh-color-task-board`。卸载会停掉正在运行的 Codex 子进程（卡片重启后会标成「运行中断」），但不会删除看板数据，也不会删除已经创建在 DSH 定时任务服务里的自动化任务；需要的话在「自动化任务」页面单独删。
 
 ## 数据位置
 
 | 数据 | 位置 | 说明 |
 |---|---|---|
-| 看板卡片与空间 | `$DSH_HOME/task-board/board.json` | 普通 JSON（`version: 2`，含 `spaces` / `activeSpaceId` / 卡片 `spaceId`），插件自己读写；原子写入（临时文件 + rename）；旧格式会自动迁移 |
-| 自动化规则 | `$DSH_HOME/storages/schedule.json` | 由 DSH 内置定时任务服务持有，卡片里只存任务 id、规则和预留会话 |
+| 看板卡片与空间 | `$DSH_HOME/task-board/board.json` | 普通 JSON（`version: 3`，含 `spaces` / `activeSpaceId` / 卡片 `spaceId` / `executor` / Codex 运行信息），插件自己读写；原子写入（临时文件 + rename）；旧格式会自动迁移 |
+| Codex 运行配置 | `$DSH_HOME/task-board/agent.json` | 代码路径、适配器命令、默认模型、运行权限、自动确认；不存密钥，权限 `600` |
+| DSH 卡自动化规则 | `$DSH_HOME/storages/schedule.json` | 由 DSH 内置定时任务服务持有，卡片里只存任务 id、规则和预留会话 |
+| Codex 卡自动化规则 | `$DSH_HOME/task-board/board.json` | 存在卡片的 `automation` 里（`engine: board`），由插件按 `nextAt` 触发 |
 
 插件不写会话日志、不改 profile 配置。

@@ -135,4 +135,16 @@ DSH 的 `schedule` 只能把提示词投递到 DSH 会话，Codex 卡没有会�
 
 ## 验证
 
-（实现完成后补）
+本地实测（2026-11-12，macOS，Codex CLI 0.155.1，ACP 适配器 `@agentclientprotocol/codex-acp@2.6.0`）：
+
+- `node --check src/*.js` 全部通过；`node --test test/*.test.mjs` 10 项通过（每小时/每天/每周、INTERVAL、UNTIL、夏令时、非法部件）。
+- `node scripts/dev/smoke-codex.mjs`（假 ACP agent）通过：检测到 Codex、保存适配器命令、建 Codex 卡并派发、
+  ACP 会话 id 回写、工具步骤累计、结果文本回收、进度 100；Codex 自动化用 `engine: board` 且不建 DSH 定时任务；
+  切到 dsh 建出定时任务、切回 codex 删除定时任务；停止后回待办；`task_board` 的 `agent` 动作可用。
+- `node scripts/dev/smoke-automation.mjs`：预置一张 `nextAt` 已过期的 Codex 自动化卡，插件启动后自动补跑一次、
+  回收结果、记录 `lastFiredAt`、把 `nextAt` 推进到下一次。
+- 真实适配器：`CodexAgent.detect()` 返回 `ready`（0.155.1，`Logged in using ChatGPT`）；`test()` 返回
+  `protocolVersion: 1`，`session/new` 拿到 sessionId 与模型列表（`gpt-6-astra[...]`）。未跑真实模型提示词，避免消耗额度。
+- 客户端：`node scripts/build.mjs` 产出 `dist/client.js` 91.1 KB；用 `react-dom/server` 渲染了整块面板
+  （页头 agent 按钮、Codex 卡 chip、详情执行者区块、配置弹窗、新建弹窗）无运行时错误；`t()` 用到的 149 个文案键全部有中文。
+- 未做：在真实 DSH GUI 里安装本版本后的人工点击验证（需要重装 bundle 并刷新页面），以及 Windows 实机；留待安装后确认。

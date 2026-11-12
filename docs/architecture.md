@@ -5,7 +5,10 @@
 | 路径 | 作用 |
 |---|---|
 | `src/host.js` | Host 半片：`/task-board/*` 接口、会话派发、定时任务对接、`task_board` 工具、提示词段落 |
-| `src/board.js` | 看板数据层：任务折叠、进度与结果、自动化配置、持久化（纯 JSON，可单测） |
+| `src/board.js` | 看板数据层：任务折叠、进度与结果、自动化配置、执行者字段、持久化（纯 JSON，可单测） |
+| `src/codex.js` | Codex 运行时：本机检测、`agent.json` 配置、ACP 运行队列、事件折叠 |
+| `src/acp.js` | ACP stdio 客户端（零依赖 NDJSON JSON-RPC） |
+| `src/rrule.js` | 时区感知的 RRULE 求值（每小时 / 每天 / 每周），给 Codex 卡自动化算下一次执行 |
 | `client/` | 浏览器半片：侧栏入口、看板面板、弹窗、拖拽、样式、i18n |
 | `dist/client.js` | 构建产物（esbuild 打包，`react` 由宿主提供），安装时直接使用 |
 | `cordis.patch.yml` | bundle patch，向 profile 插入 `task-board` 这一行 |
@@ -38,6 +41,30 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 - `task_board` 工具新增 `space` 参数（`add` / `list`，空间 id 或名称，缺省当前空间）与 `spaces`（列空间和各自卡片数）、`addSpace`（新建空间）动作；`list` 只返回目标空间的卡片，`compact` 输出带 `spaceId`。
 - 面板按 `activeSpaceId` 过滤：列计数、`tags`、搜索、`全部 / 进行中 / 待验收` 筛选、「清空已完成」都只算当前空间；切换空间由 Host 落盘，所以刷新页面或多个标签页看到的当前空间一致。
 - 会话事件折叠（`applyEvent`）不分空间：卡片在别的空间里后台执行时进度照常折叠，切回去就能看到。
+
+## Codex 执行者
+
+- 卡片新增 `executor: 'dsh' | 'codex'`，默认 `dsh`；旧 `board.json`（v2）读取时补 `dsh` 并升到 v3。
+- Codex 卡不建 DSH 会话：`dispatch` 进 `CodexAgent` 的运行队列（默认并发 1，其余排队），启动适配器
+  `npx -y @agentclientprotocol/codex-acp`（`CODEX_PATH` / `INITIAL_AGENT_MODE` / `CODEX_CONFIG` 由 `agent.json` 注入）。
+- ACP 握手：`initialize` → `session/new { cwd: workspace }` → `session/prompt(buildPrompt)`；`session/update` 里的
+  thought / tool_call / agent_message_chunk 折成 `board.markCodex*`，复用与 DSH 相同的阶段与进度；`stopReason` 决定
+  待验收 / 待办 / 错误。
+- `session/request_permission` 默认自动批准（优先 `allow_once`），沙箱由 Codex 自己执行；关闭自动批准时一律拒绝。
+- 停止：`session/cancel` → 3s 后关闭连接；45 分钟看门狗兜底；插件卸载或宿主重启时子进程被杀，启动时把仍在
+  `running` 的 Codex 卡标成「运行中断」。
+- 检测与测试：解析 Codex 路径后跑 `--version` / `login status`；测试连接只做 `initialize` + 临时 `session/new`，
+  不发送提示词。配置存 `$DSH_HOME/task-board/agent.json`，不存密钥。
+
+## 自动化双引擎
+
+- `automation.engine`：`dsh` 走宿主 `schedule`；`board` 走插件内调度，只用于 Codex 卡（DSH 定时任务只能投递到会话）。
+- `board` 引擎把 `rrule`、`nextAt`、`lastFiredAt` 存在卡片里，插件每 30 秒检查一次到期卡，交给 Codex 队列后
+  用 `src/rrule.js` 算下一次；停机错过的发生点只补一次。
+- 暂停 / 恢复只改 `active`；「已完成」列暂停、「待办/进行中」恢复，与 DSH 卡一致。
+- 切换执行者时自动迁移：DSH → Codex 删除定时任务、按同一规则建 `board` 自动化；Codex → DSH 反过来建定时任务。
+  规则里出现不支持的部件（如 `FREQ=MINUTELY`、`BYMONTH`、`COUNT`）时拒绝切换并提示。
+- 兼容：旧自动化没有 `engine`，按「有 `scheduleId` 就是 dsh」处理。
 
 ## 自动化投递链路
 

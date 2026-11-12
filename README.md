@@ -4,7 +4,7 @@
 [![build](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml/badge.svg)](https://github.com/shlan28/dsh-task-board/actions/workflows/build.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话里执行，看板实时折叠进度，执行完把结论收回来；也可以按计划自动重复执行。
+DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话里执行，也可以交给本机 Codex（ACP）执行；看板实时折叠进度，执行完把结论收回来，也能按计划自动重复执行。
 
 ![任务看板](docs/images/task-board.png)
 
@@ -12,9 +12,10 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 
 - **四列看板**：待办、进行中、待验收、已完成。拖拽换列，卡片上有标签、进度条和执行阶段。
 - **空间隔离**：可以新建多个空间，右上角下拉切换；每个空间只看得到自己的卡片，列计数、搜索筛选、清空已完成都按当前空间算。初始是「默认空间」，旧数据自动归入其中。
-- **派发到会话**：点卡片上的 ▶ 或详情里的「开始执行」，Harness 会新建（或复用）一个会话，把任务卡写成提示词派发进去。执行过程中的 `turn/start`、`tool/call`、`assistant/message`、`turn/end` 会实时折算成进度。
+- **两种执行者**：每张卡可以选「DSH 会话」或「Codex (ACP)」。DSH 卡会新建（或复用）会话并把卡写成提示词；Codex 卡由插件启动 `@agentclientprotocol/codex-acp`，通过 ACP 调用本机 Codex CLI，在卡片工作区里执行。两种执行者的进度、步骤、停止、结果回收走同一套看板语义。
+- **Codex 配置**：页头「新建任务」右侧的 agent 图标打开配置弹窗：检测本机 Codex 路径/版本/登录状态、测试 ACP 连接、设置默认模型、运行权限（只读 / 工作区可写 / 完全访问）与自动确认工具调用。
 - **按工作区执行**：新建或详情里可以给卡片指定工作区，▶ 和定时执行都会在那个目录里新建会话；不指定就跟随宿主默认目录。工作区被移除后，卡片继续用保存的路径。
-- **自动化任务**：新建任务时切到「定时执行」，按每小时、每天或每周（可多选星期几）重复。到点由 DSH 的定时任务自动把这张卡派发进它自己的会话，执行结果照常进「待验收」，验收后**回到待办**等下一轮——周期任务没有终态。卡片和详情里会显示规则与下次执行时间，可以暂停、启用、改规则或取消自动化。
+- **自动化任务**：新建任务时切到「定时执行」，按每小时、每天或每周（可多选星期几）重复。DSH 卡由 DSH 定时任务投递到会话；Codex 卡由插件按同一规则自己调度（不用建 DSH 会话）。执行结果照常进「待验收」，验收后**回到待办**等下一轮——周期任务没有终态。切换执行者会自动迁移自动化，不需要重建规则。卡片和详情里会显示规则与下次执行时间，可以暂停、启用、改规则或取消自动化。
 - **结果回收**：任务结束自动进「待验收」，最后一次助手回复存为「最新结果」。验收时，普通卡进「已完成」，自动化卡回到「待办」并保留规则与上一轮结果。
 - **会话里加卡**：任意会话里的 agent 都能调用 `task_board` 工具加卡、查卡、改卡、派发或读结果。
 - **打开会话**：卡片和详情里都能直接跳到执行它的会话。
@@ -23,6 +24,12 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 ## 安装
 
 要求 DSH `>=0.2.1-rc.5 <0.3.0`、Node `>=20`。仓库里已经带好构建产物 `dist/client.js`，安装时不需要构建。
+
+用 Codex 执行者还需要：
+
+- 本机安装 Codex CLI（`codex --version` 可运行）并已登录（`codex login`）；
+- 能访问 npm（首次运行会用 `npx -y @agentclientprotocol/codex-acp` 拉取 ACP 适配器），或者预装 `codex-acp` 并在配置弹窗的「高级」里填本地命令；
+- 网络与模型调用由 Codex CLI 自己负责，看板不保存任何密钥。
 
 ### 从 npm 安装（推荐）
 
@@ -69,15 +76,15 @@ node scripts/build.mjs
 2. 想清理空间，就在下拉里点空间右侧的删除按钮：该空间的卡片会移到默认空间，不会丢数据。
 3. 想让这张卡自己跑，就在新建面板里把「自动化」切到「定时执行」，选频率、时间（每周再选星期几）后创建。
 4. 想让它跑在某个项目里，就在「工作区」下拉里选目标工作区（默认目录 = 跟随宿主）。
-5. 卡片上点 ▶ 开始执行；卡片详情里能看到绑定会话、执行阶段、最新结果，也能停止、验收、退回待办或删除。
+5. 想用 Codex，先在新建/详情里把「执行者」切到 Codex (ACP)，再点 ▶。页头的 agent 图标可以检测本机 Codex、测试连接和调整运行权限；详情里能看到执行阶段、Codex 会话、最新结果，也能停止、验收、退回待办或删除。
 6. 详情里的「工作区」区块可以随时换工作区（执行中的卡要先停），「自动化」区块可以看下次执行时间、暂停 / 启用、修改规则、取消自动化。
 7. 在任意会话里说「把 XX 加到看板」或「每天 9 点检查部署」，agent 会调用 `task_board` 建卡，`automation` 参数负责定时规则，`workspace` 参数负责工作区，`space` 参数负责空间。
 
-`task_board` 工具的动作：`add`、`list`、`spaces`（列出空间）、`addSpace`（新建空间）、`update`、`move`、`run`（`here: true` 表示在当前会话执行）、`result`、`remove`。`add` 和 `update` 还接受 `automation`：`{ frequency: 'daily' | 'weekly' | 'hourly' | 'none', time: 'HH:MM', weekdays: ['MO', …], timeZone, active, rrule }`，以及 `workspace`：工作区 id、绝对路径或工作区标题（`''` 表示清除，缺省时停留在当前/默认目标）。`add`、`list` 接受 `space`：空间 id 或名称，缺省当前空间；`addSpace` 用 `name` 指定空间名。
+`task_board` 工具的动作：`add`、`list`、`spaces`（列出空间）、`addSpace`（新建空间）、`update`、`move`、`run`（`here: true` 表示在当前会话执行，仅 DSH 卡）、`result`、`remove`、`agent`（查看 Codex 运行时状态）。`add` / `update` 接受 `executor: 'dsh' | 'codex'` 选择执行者。`add` 和 `update` 还接受 `automation`：`{ frequency: 'daily' | 'weekly' | 'hourly' | 'none', time: 'HH:MM', weekdays: ['MO', …], timeZone, active, rrule }`，以及 `workspace`：工作区 id、绝对路径或工作区标题（`''` 表示清除，缺省时停留在当前/默认目标）。`add`、`list` 接受 `space`：空间 id 或名称，缺省当前空间；`addSpace` 用 `name` 指定空间名。
 
 ## 数据
 
-看板数据保存在 `$DSH_HOME/task-board/board.json`，是普通 JSON：`spaces` 是空间列表，`activeSpaceId` 是当前空间，卡片各自带 `spaceId`。不写会话日志，不改 profile 配置。
+看板数据保存在 `$DSH_HOME/task-board/board.json`（`version: 3`），是普通 JSON：`spaces` 是空间列表，`activeSpaceId` 是当前空间，卡片各自带 `spaceId`、`executor` 与 Codex 运行信息。Codex 运行参数在 `$DSH_HOME/task-board/agent.json`。不写会话日志，不改 profile 配置。
 
 自动化规则交给 DSH 自带的定时任务服务保存（`$DSH_HOME/storages/schedule.json`），卡片里只存任务 id、规则和预留会话。所以这张卡也会出现在 Harness 的「自动化任务」页面里；在那边停用或删除，看板卡片会显示为已暂停 / 没有后续执行。
 
