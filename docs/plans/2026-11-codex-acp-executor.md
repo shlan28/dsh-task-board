@@ -162,4 +162,7 @@ DSH 的 `schedule` 只能把提示词投递到 DSH 会话，Codex 卡没有会�
     （`agent.json`）后重跑。
   - 第三次成功：`stopReason: completed`、progress 100、ACP session id 回写，结果末尾为 `OK`；
     首次启动约 2 分钟（Codex 加载 skills 上下文 + WebSocket 超时回退 HTTPS），之后会快一些。
+- 实机自动化迁移：Codex 卡创建自动化时 `engine: board`、不建 DSH 定时任务；切到 dsh 后建出
+  `schedule-1babedac-…`，再切回 codex 后该定时任务从 `schedule.json` 删除、卡片回到 `engine: board`；
+  临时验证卡已删除。
 - 客户端仍需刷新页面后加载新的 `dist/client.js`；UI 点击验证交给用户刷新后确认。
