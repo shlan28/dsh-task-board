@@ -34,7 +34,7 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 dsh-color-task-board
 ```
 
-需要固定版本时写成 `dsh-color-task-board@0.1.6`。也可以用 `dsh` CLI 安装到某个 profile：
+需要固定版本时写成 `dsh-color-task-board@0.1.7`。也可以用 `dsh` CLI 安装到某个 profile：
 
 ```bash
 dsh plugin --profile desktop add dsh-color-task-board
