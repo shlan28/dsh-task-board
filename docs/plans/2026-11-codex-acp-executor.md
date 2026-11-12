@@ -23,7 +23,7 @@ ACP **server**，方向相反），所以由插件自己当 ACP **client**。
 |---|---|---|
 | 可用状态、版本、安装位置 | 保留（只读） | 检测结果一行展示 |
 | 重新检测 | 保留 | 打开弹窗自动重检 + 手动按钮 |
-| Codex CLI 路径 | 保留 | 留空自动探测；有值作为 `CODEX_PATH` |
+| Codex CLI 路径 | 保留 | 留空自动探测；探测到的路径同样作为 `CODEX_PATH` 传给适配器 |
 | 测试连接 | 保留 | ACP `initialize` + `session/new`，不建卡、不花 token |
 | 默认模型 | 保留（可空） | 空 = Codex 默认；有值写 `CODEX_CONFIG` |
 | 运行权限 | 新增 | `只读 / 工作区可写（默认）/ 完全访问` → `INITIAL_AGENT_MODE` |
@@ -58,9 +58,12 @@ ACP **server**，方向相反），所以由插件自己当 ACP **client**。
 ### 3. 检测与测试（`src/codex.js`）
 
 - 检测：解析 Codex 路径（配置值 → `PATH`），跑 `codex --version`、`codex login status`（各 4s 超时）；
+  探测到的路径会显式作为 `CODEX_PATH` 传给适配器（npx 缓存里自带的 `@openai/codex` 可能缺平台可执行依赖）；
   适配器按配置命令 → `PATH` 里的 `codex-acp` → `npx` 解析；状态分 `ready / no-codex / no-adapter / error`。
 - 测试：起适配器 → `initialize` → `session/new`（临时目录）→ 关闭；返回协议版本、Codex 登录提示、
   可用模型/模式（适配器公告时）。不发送提示词，不产生模型调用。
+- 选模型：`session/new` 后按 `configOptions` 里的 `model` 选项调用 `session/set_config_option`；
+  `gpt-6-astra[medium]` 这类复合 id 会拆成基础模型 + 推理强度。配置留空则沿用 Codex 自己的默认模型。
 - 配置存 `$DSH_HOME/task-board/agent.json`（独立于 `board.json`），字段：
   `codexPath`、`adapterCommand`、`model`、`permissionMode`、`autoApprove`、`lastDetectedAt`。
   密钥不落盘。
@@ -147,4 +150,16 @@ DSH 的 `schedule` 只能把提示词投递到 DSH 会话，Codex 卡没有会�
   `protocolVersion: 1`，`session/new` 拿到 sessionId 与模型列表（`gpt-6-astra[...]`）。未跑真实模型提示词，避免消耗额度。
 - 客户端：`node scripts/build.mjs` 产出 `dist/client.js` 91.1 KB；用 `react-dom/server` 渲染了整块面板
   （页头 agent 按钮、Codex 卡 chip、详情执行者区块、配置弹窗、新建弹窗）无运行时错误；`t()` 用到的 149 个文案键全部有中文。
-- 未做：在真实 DSH GUI 里安装本版本后的人工点击验证（需要重装 bundle 并刷新页面），以及 Windows 实机；留待安装后确认。
+### 实机（2026-11-12 晚，desktop profile，link: 安装）
+
+- 把本目录 link 进 `~/.dsh/profiles/desktop`，插件重载后 host 立即用新代码：`~/.dsh/task-board/agent.json`
+  自动生成，`task_board` 工具的 `agent` 动作返回 `ready`（0.155.1，已登录 ChatGPT）。
+- 既有 v2 `board.json` 自动迁移到 v3：4 张旧卡都补上 `executor: dsh` 与 `codex` 字段，行为不变。
+- 真实 Codex 卡 `t_mwdhyw5701pkh`（工作区 `/private/tmp/dsh-codex-live-check`，要求只回 OK）：
+  - 第一次运行失败：npx 缓存里的 `@openai/codex` 缺 `@openai/codex-darwin-arm64`。修法是把检测到的本机
+    Codex 路径作为 `CODEX_PATH` 传给适配器；已在 `connectionOptions()` 里补上。
+  - 第二次运行失败：Codex 默认模型 `gpt-6.1-sol` 不被 ChatGPT 账号支持。把默认模型设为 `gpt-6-sol`
+    （`agent.json`）后重跑。
+  - 第三次成功：`stopReason: completed`、progress 100、ACP session id 回写，结果末尾为 `OK`；
+    首次启动约 2 分钟（Codex 加载 skills 上下文 + WebSocket 超时回退 HTTPS），之后会快一些。
+- 客户端仍需刷新页面后加载新的 `dist/client.js`；UI 点击验证交给用户刷新后确认。

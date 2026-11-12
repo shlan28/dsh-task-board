@@ -29,6 +29,7 @@ DeepSeek Harness 的侧栏任务看板。任务卡可以派发到自己的会话
 
 - 本机安装 Codex CLI（`codex --version` 可运行）并已登录（`codex login`）；
 - 能访问 npm（首次运行会用 `npx -y @agentclientprotocol/codex-acp` 拉取 ACP 适配器），或者预装 `codex-acp` 并在配置弹窗的「高级」里填本地命令；
+- 模型要选账号支持的：Codex 自己的默认模型可能不被当前账号支持（例如报 `model_not_found`），在弹窗「默认模型」里填一个可用的（如 `gpt-6-sol`）即可；
 - 网络与模型调用由 Codex CLI 自己负责，看板不保存任何密钥。
 
 ### 从 npm 安装（推荐）

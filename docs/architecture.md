@@ -46,7 +46,9 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 
 - 卡片新增 `executor: 'dsh' | 'codex'`，默认 `dsh`；旧 `board.json`（v2）读取时补 `dsh` 并升到 v3。
 - Codex 卡不建 DSH 会话：`dispatch` 进 `CodexAgent` 的运行队列（默认并发 1，其余排队），启动适配器
-  `npx -y @agentclientprotocol/codex-acp`（`CODEX_PATH` / `INITIAL_AGENT_MODE` / `CODEX_CONFIG` 由 `agent.json` 注入）。
+  `npx -y @agentclientprotocol/codex-acp`。检测到的本机 Codex 路径会作为 `CODEX_PATH` 传给适配器（npx 缓存里
+  自带的 codex 可能缺平台依赖），`INITIAL_AGENT_MODE` / `CODEX_CONFIG` 由 `agent.json` 注入；默认模型在
+  `session/new` 之后通过 ACP `session/set_config_option` 应用。
 - ACP 握手：`initialize` → `session/new { cwd: workspace }` → `session/prompt(buildPrompt)`；`session/update` 里的
   thought / tool_call / agent_message_chunk 折成 `board.markCodex*`，复用与 DSH 相同的阶段与进度；`stopReason` 决定
   待验收 / 待办 / 错误。
