@@ -24,6 +24,8 @@ let snapshot = {
   workspaces: [],
   defaultWorkspacePath: '',
   workspacesRevision: '',
+  agent: null,
+  agentRevision: '',
 }
 
 const listeners = new Set()
@@ -65,7 +67,7 @@ export async function refresh() {
   try {
     const data = await request('/state')
     const revision = data?.revision ?? 0
-    const stamp = `${revision}:${data?.schedulesRevision ?? ''}:${data?.workspacesRevision ?? ''}:${data?.spacesRevision ?? ''}`
+    const stamp = `${revision}:${data?.schedulesRevision ?? ''}:${data?.workspacesRevision ?? ''}:${data?.spacesRevision ?? ''}:${data?.agentRevision ?? ''}`
     if (snapshot.loaded && stamp === snapshot.stamp && !snapshot.error) return true
     setState({
       tasks: Array.isArray(data?.tasks) ? data.tasks : [],
@@ -76,6 +78,8 @@ export async function refresh() {
       workspaces: Array.isArray(data?.workspaces) ? data.workspaces : [],
       defaultWorkspacePath: typeof data?.defaultWorkspacePath === 'string' ? data.defaultWorkspacePath : '',
       workspacesRevision: typeof data?.workspacesRevision === 'string' ? data.workspacesRevision : '',
+      agent: data?.agent ?? null,
+      agentRevision: typeof data?.agentRevision === 'string' ? data.agentRevision : '',
       revision,
       stamp,
       loaded: true,
@@ -88,8 +92,8 @@ export async function refresh() {
   }
 }
 
-/** 执行一个看板操作；失败时提示并返回 null。 */
-export async function act(op, payload = {}) {
+/** 执行一个看板操作；失败时提示并返回 null（soft 时把失败结果也返回给调用方）。 */
+export async function act(op, payload = {}, { soft = false } = {}) {
   try {
     const data = await request('/op', { method: 'POST', body: JSON.stringify({ op, ...payload }) })
     if (data?.state) {
@@ -106,13 +110,19 @@ export async function act(op, payload = {}) {
           typeof data.state.defaultWorkspacePath === 'string' ? data.state.defaultWorkspacePath : snapshot.defaultWorkspacePath,
         workspacesRevision:
           typeof data.state.workspacesRevision === 'string' ? data.state.workspacesRevision : snapshot.workspacesRevision,
+        agent: data.state.agent ?? snapshot.agent,
+        agentRevision:
+          typeof data.state.agentRevision === 'string' ? data.state.agentRevision : snapshot.agentRevision,
         revision,
-        stamp: `${revision}:${data.state.schedulesRevision ?? ''}:${data.state.workspacesRevision ?? ''}:${data.state.spacesRevision ?? ''}`,
+        stamp: `${revision}:${data.state.schedulesRevision ?? ''}:${data.state.workspacesRevision ?? ''}:${data.state.spacesRevision ?? ''}:${data.state.agentRevision ?? ''}`,
         loaded: true,
         error: null,
       })
     }
-    if (!data?.ok) throw new Error(data?.error || '操作失败')
+    if (!data?.ok) {
+      if (soft) return data
+      throw new Error(data?.error || '操作失败')
+    }
     return data
   } catch (error) {
     notify(error?.message || String(error), { error: true })
@@ -132,6 +142,9 @@ export const actions = {
   addSpace: name => act('addSpace', { name }),
   removeSpace: id => act('removeSpace', { id }),
   selectSpace: id => act('selectSpace', { id }),
+  detectAgent: () => act('agentDetect', {}, { soft: true }),
+  testAgent: () => act('agentTest', {}, { soft: true }),
+  saveAgent: config => act('agentSave', { config }, { soft: true }),
 }
 
 /** 切换空间时收起详情抽屉，避免看着别的空间里的卡。 */
@@ -159,6 +172,10 @@ export function openSpaceDialog() {
 
 export function openRemoveSpaceDialog(id) {
   setState({ dialog: { kind: 'remove-space', id } })
+}
+
+export function openAgentDialog() {
+  setState({ dialog: { kind: 'agent' } })
 }
 
 export function closeDialog() {

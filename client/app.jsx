@@ -2,6 +2,7 @@
 import React from 'react'
 import { formatDateTime, formatRelative, getClientContext, localeId, useT } from './i18n.js'
 import {
+  IconAgent,
   IconChat,
   IconChevron,
   IconClock,
@@ -19,6 +20,7 @@ import {
   IconX,
 } from './icons.jsx'
 import css from './styles.css'
+import { CodexAgentDialog } from './agent.jsx'
 import {
   actions,
   closeDetail,
@@ -26,6 +28,7 @@ import {
   DEFAULT_SPACE_ID,
   notify,
   openAddDialog,
+  openAgentDialog,
   openDetail,
   openRemoveSpaceDialog,
   openSpaceDialog,
@@ -485,6 +488,14 @@ function Card({ task, t }) {
             automationLabel(task.automation, t),
           )
         : null,
+      task.executor === 'codex'
+        ? React.createElement(
+            'span',
+            { className: 'tb-chip is-codex', title: t('Runs over ACP with the local Codex CLI.') },
+            React.createElement(IconAgent, { size: 11 }),
+            t('Codex'),
+          )
+        : null,
       task.source === 'session'
         ? React.createElement('span', { className: 'tb-chip is-quiet' }, React.createElement(IconChat, { size: 11 }), t('From a session'))
         : task.sessionId
@@ -532,7 +543,7 @@ function Card({ task, t }) {
             label: t('Stop'),
             onClick: async () => {
               const result = await actions.stop(task.id)
-              if (result) notify(t('Stopped the run'))
+              if (result) notify(t(task.executor === 'codex' ? 'Stopped the Codex run' : 'Stopped the run'))
             },
           })
         : React.createElement(IconButton, {
@@ -540,7 +551,7 @@ function Card({ task, t }) {
             label: task.sessionId ? t('Rerun') : t('Run'),
             onClick: async () => {
               const result = await actions.dispatch(task.id)
-              if (result) notify(t('Dispatched to its session'))
+              if (result) notify(t(task.executor === 'codex' ? 'Dispatched to Codex' : 'Dispatched to its session'))
             },
           }),
     ),
@@ -682,7 +693,27 @@ function Header({ t, tasks, query, filter, spaces, activeSpaceId, spaceCounts })
         React.createElement(IconPlus, { size: 15 }),
         t('New task'),
       ),
+      React.createElement(AgentButton, { t }),
     ),
+  )
+}
+
+function AgentButton({ t }) {
+  const state = useBoardState()
+  const status = state.agent?.status
+  const tone = status?.state || 'unknown'
+  const label = status?.state === 'ready' ? t('Codex available') : t('Codex runtime')
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      className: `tb-agentbtn is-${tone}`,
+      onClick: () => openAgentDialog(),
+      title: `${label} · ${status?.message || t('Not checked yet')}`,
+      'aria-label': t('Codex agent'),
+    },
+    React.createElement(IconAgent, { size: 16 }),
+    React.createElement('span', { className: 'tb-agentdot', 'aria-hidden': 'true' }),
   )
 }
 
@@ -692,6 +723,7 @@ function AddDialog({ t, defaultColumn, tags, workspaces, spaceId }) {
   const [tag, setTag] = React.useState('')
   const [column, setColumn] = React.useState(defaultColumn || 'todo')
   const [workspaceId, setWorkspaceId] = React.useState('')
+  const [executor, setExecutor] = React.useState('dsh')
   const [repeatOn, setRepeatOn] = React.useState(false)
   const [rule, setRule] = React.useState(defaultAutomation)
   const [busy, setBusy] = React.useState(false)
@@ -701,6 +733,8 @@ function AddDialog({ t, defaultColumn, tags, workspaces, spaceId }) {
   }, [])
 
   const list = Array.isArray(workspaces) ? workspaces : []
+  const boardState = useBoardState()
+  const codexReady = boardState.agent?.status?.state === 'ready'
 
   const submit = async event => {
     event.preventDefault()
@@ -713,6 +747,7 @@ function AddDialog({ t, defaultColumn, tags, workspaces, spaceId }) {
       tag,
       column,
       spaceId,
+      executor,
       workspaceId: picked?.id ?? null,
       workspacePath: picked?.path ?? null,
       workspaceTitle: picked?.title ?? null,
@@ -819,6 +854,39 @@ function AddDialog({ t, defaultColumn, tags, workspaces, spaceId }) {
     ),
     React.createElement(
       'div',
+      { className: 'tb-field' },
+      React.createElement('span', null, t('Executor')),
+      React.createElement(
+        'div',
+        { className: 'tb-seg tb-exec-seg' },
+        React.createElement(
+          'button',
+          { type: 'button', className: executor === 'dsh' ? 'is-on' : '', onClick: () => setExecutor('dsh') },
+          t('DSH session'),
+        ),
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: executor === 'codex' ? 'is-on' : '',
+            disabled: !codexReady,
+            title: codexReady ? t('Runs over ACP with the local Codex CLI.') : t('Open the agent settings to check Codex.'),
+            onClick: () => setExecutor('codex'),
+          },
+          React.createElement(IconAgent, { size: 12 }),
+          t('Codex (ACP)'),
+        ),
+      ),
+      React.createElement(
+        'p',
+        { className: 'tb-hint' },
+        executor === 'codex'
+          ? t('Codex runs this card over ACP in its workspace. Automation still works.')
+          : t('DSH runs this card in a session it owns.'),
+      ),
+    ),
+    React.createElement(
+      'div',
       { className: 'tb-field tb-auto-field' },
       React.createElement('span', null, t('Automation')),
       React.createElement(
@@ -876,7 +944,15 @@ function DetailSheet({ task, t, workspaces }) {
   const meta = COLUMN_META[task.column]
   const running = isRunning(task)
   const phase = phaseLabel(task, t)
+  const boardState = useBoardState()
+  const codexReady = boardState.agent?.status?.state === 'ready'
   const workspaceList = Array.isArray(workspaces) ? workspaces : []
+
+  const changeExecutor = async next => {
+    if (next === task.executor || running) return
+    const result = await actions.update(task.id, { executor: next })
+    if (result) notify(result.warning || t('Executor updated'), { error: Boolean(result.warning) })
+  }
   const savedWorkspace = task.workspacePath
     ? workspaceList.find(entry => entry.id === task.workspaceId) || workspaceList.find(entry => entry.path === task.workspacePath)
     : null
@@ -994,7 +1070,7 @@ function DetailSheet({ task, t, workspaces }) {
                     return
                   }
                   const result = await actions.dispatch(task.id)
-                  if (result) notify(t('Dispatched to its session'))
+                  if (result) notify(t(task.executor === 'codex' ? 'Dispatched to Codex' : 'Dispatched to its session'))
                 },
               },
               running ? t('Stop') : task.sessionId ? t('Rerun') : t('Run'),
@@ -1094,6 +1170,45 @@ function DetailSheet({ task, t, workspaces }) {
       ),
       React.createElement(
         'section',
+        { className: 'tb-block' },
+        React.createElement('h4', null, t('Executor')),
+        React.createElement(
+          'div',
+          { className: 'tb-seg tb-exec-seg' },
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: task.executor === 'dsh' ? 'is-on' : '',
+              disabled: running,
+              onClick: () => changeExecutor('dsh'),
+            },
+            t('DSH session'),
+          ),
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: task.executor === 'codex' ? 'is-on' : '',
+              disabled: running || (!codexReady && task.executor !== 'codex'),
+              onClick: () => changeExecutor('codex'),
+            },
+            React.createElement(IconAgent, { size: 12 }),
+            t('Codex (ACP)'),
+          ),
+        ),
+        React.createElement(
+          'p',
+          { className: 'tb-hint' },
+          running
+            ? t('Stop the run before switching executor.')
+            : task.executor === 'codex'
+              ? t('Codex runs this card over ACP in its workspace. Automation still works.')
+              : t('DSH runs this card in a session it owns.'),
+        ),
+      ),
+      React.createElement(
+        'section',
         { className: 'tb-block tb-auto-block' },
         React.createElement(
           'div',
@@ -1186,8 +1301,28 @@ function DetailSheet({ task, t, workspaces }) {
       React.createElement(
         'section',
         { className: 'tb-block' },
-        React.createElement('h4', null, t('Session')),
-        task.sessionId
+        React.createElement('h4', null, task.executor === 'codex' ? t('Codex run') : t('Session')),
+        task.executor === 'codex'
+          ? task.codex?.sessionId
+            ? React.createElement(
+                'div',
+                { className: 'tb-session' },
+                React.createElement('code', null, task.codex.sessionId.slice(0, 12)),
+                task.codex.model
+                  ? React.createElement('span', { className: 'tb-chip is-quiet' }, task.codex.model)
+                  : null,
+                task.codex.stopReason
+                  ? React.createElement('span', { className: 'tb-chip is-quiet' }, task.codex.stopReason)
+                  : null,
+              )
+            : React.createElement(
+                'p',
+                { className: 'tb-muted' },
+                t('No Codex run yet.'),
+                ' ',
+                t('Codex starts in this workspace when you run the card.'),
+              )
+          : task.sessionId
           ? React.createElement(
               'div',
               { className: 'tb-session' },
@@ -1336,6 +1471,13 @@ export function BoardPanel() {
           Modal,
           { title: t('New space'), onClose: closeDialog, width: 440 },
           React.createElement(SpaceDialog, { t }),
+        )
+      : null,
+    dialogKind === 'agent' && state.dialog
+      ? React.createElement(
+          Modal,
+          { title: t('Codex agent'), onClose: closeDialog, width: 560 },
+          React.createElement(CodexAgentDialog, { t }),
         )
       : null,
     removeSpaceTarget ? React.createElement(RemoveSpaceDialog, { t, space: removeSpaceTarget, count: removeSpaceCount }) : null,

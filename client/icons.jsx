@@ -60,6 +60,12 @@ export const IconLayers = props => React.createElement(Svg, props,
 export const IconRefresh = props => React.createElement(Svg, props,
   React.createElement('path', { d: 'M20 11a8 8 0 10-2.6 6.3' }),
   React.createElement('path', { d: 'M20 5v6h-6' }))
+export const IconAgent = props => React.createElement(Svg, props,
+  React.createElement('rect', { x: 4, y: 8, width: 16, height: 11, rx: 3.4 }),
+  React.createElement('path', { d: 'M12 4.2v3.8' }),
+  React.createElement('circle', { cx: 9.2, cy: 13.2, r: 1.2, fill: 'currentColor', stroke: 'none' }),
+  React.createElement('circle', { cx: 14.8, cy: 13.2, r: 1.2, fill: 'currentColor', stroke: 'none' }),
+  React.createElement('path', { d: 'M9.6 16.1h4.8' }))
 
 export function IconKanban({ size = 22, active = false }) {
   return React.createElement(
