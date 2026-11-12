@@ -19,7 +19,7 @@
 dsh-color-task-board
 ```
 
-指定版本：`dsh-color-task-board@0.1.7`。
+指定版本：`dsh-color-task-board@0.2.0`。
 
 用 `dsh` CLI 安装到某个 profile：
 
