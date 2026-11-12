@@ -319,7 +319,10 @@ export class CodexAgent {
   connectionOptions() {
     const env = { NO_BROWSER: '1', INITIAL_AGENT_MODE: this.config.permissionMode }
     if (this.config.model) env.CODEX_CONFIG = JSON.stringify({ model: this.config.model })
-    if (this.config.codexPath) env.CODEX_PATH = this.config.codexPath
+    // 自动检测到的本机 Codex 也要显式传给适配器：npx 缓存里自带的 @openai/codex
+    // 可能缺平台可执行依赖（缺 @openai/codex-<platform>），本机安装的才是完整的。
+    const codexPath = this.config.codexPath || this.status.codex?.path || ''
+    if (codexPath) env.CODEX_PATH = codexPath
     return {
       env,
       log: this.log,
@@ -341,7 +344,7 @@ export class CodexAgent {
     this.waiting.push(task.id)
     this.board?.markCodexQueued(task.id)
     this.drain()
-    return { ok: true, queued: this.active.size >= this.limit }
+    return { ok: true, queued: this.waiting.includes(task.id) }
   }
 
   drain() {
@@ -369,6 +372,9 @@ export class CodexAgent {
       const cwd = this.boardDirectory(task)
       const session = await connection.newSession({ cwd })
       run.sessionId = session.sessionId
+      await this.applyModel(connection, session).catch(error => {
+        this.log('task-board: 设置 Codex 模型失败，继续用默认模型', error)
+      })
       this.board?.attachCodexSession(task.id, session.sessionId, this.config.model)
       if (run.cancelled) throw new AcpError('已停止')
       run.watchdog = setTimeout(() => {
@@ -404,6 +410,27 @@ export class CodexAgent {
       await run.connection?.close().catch(() => {})
       this.active.delete(task.id)
       this.drain()
+    }
+  }
+
+  /** 通过 ACP 配置项选模型：`gpt-6-astra[medium]` 拆成基础模型 + 推理强度。 */
+  async applyModel(connection, session) {
+    const desired = this.config.model
+    if (!desired) return
+    const options = Array.isArray(session?.configOptions) ? session.configOptions : []
+    const modelOption = options.find(option => option?.id === 'model')
+    const match = /^(.*?)\[([^\]]+)\]$/.exec(desired)
+    const base = match ? match[1] : desired
+    const effort = match ? match[2] : ''
+    const values = Array.isArray(modelOption?.options) ? modelOption.options.map(option => option.value) : []
+    if (values.length && !values.includes(base)) {
+      this.log(`task-board: Codex 没有模型 ${base}，可选：${values.join(', ')}`)
+      return
+    }
+    await connection.setConfigOption(session.sessionId, 'model', base)
+    if (effort) {
+      const effortOption = options.find(option => option?.id === 'reasoning_effort')
+      if (effortOption) await connection.setConfigOption(session.sessionId, 'reasoning_effort', effort)
     }
   }
 
