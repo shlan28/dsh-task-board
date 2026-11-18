@@ -12,9 +12,7 @@ node scripts/build.mjs                     # 1. 改了 client/ 就重新构建�
 git add -A && git commit -m "feat: ..."     # 2. 提交改动
 npm version patch -m "chore: release %s"    # 3. 版本号 +1 并打 tag（minor / major 同理）
 npm publish                                # 4. 发布，prepublishOnly 会再构建一次
-curl -X PUT -H 'Content-Type: application/json' \
-  -d '{"tips":"release <版本号>"}' \
-  https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs   # 5. 发布后立刻触发 npmmirror 同步（必须）
+npm run sync-mirror                        # 5. 等官方落库并同步 npmmirror（必须，脚本会处理上游延迟）
 git push --follow-tags                     # 6. 推代码和 tag，GitHub build CI 开始跑
 ```
 
@@ -37,16 +35,40 @@ export HTTP_PROXY=http://127.0.0.1:7890
 - **npmmirror 的同步请求是直连的**，不要挂代理；`https://registry.npmmirror.com` 在本机可直连，
   查询同步结果也不需要代理。
 
+## 手动同步 npmmirror
+
+发布后运行：
+
+```bash
+npm run sync-mirror            # 同步 package.json 里的当前版本
+npm run sync-mirror 0.3.0      # 指定版本
+SYNC_TIMEOUT_MS=600000 npm run sync-mirror   # 放宽等待上限（默认 5 分钟）
+```
+
+脚本 `scripts/sync-mirror.mjs` 会按顺序做四件事：
+
+1. 轮询 npm 官方源，直到版本号和 tarball 都可见；
+2. 上游镜像 `r.cnpmjs.org` 没有该版本时先触发上游同步，并等到同样可见；
+3. 触发 npmmirror 同步；
+4. 轮询 npmmirror，直到版本出现在 `versions` 里，并打印 latest 与链接。
+
+脚本直连 registry，不读 `HTTPS_PROXY`；任何一步超时都会打印卡在哪一步并以非 0 退出。手工兜底命令见「要点」。
+
 ## 要点
 
 - **版本号必须递增**，registry 不接受重复版本。发布后用 `npm view dsh-color-task-board version` 校验。
-- **发布后要手动触发一次 npmmirror 同步**（为什么见下）。命令返回 `{"ok":true,"id":"…","state":"waiting"}`，用返回的 id 查状态：
+- **发布后要同步一次 npmmirror**（为什么见下）。优先跑 `npm run sync-mirror`：它会等官方源与上游镜像都就绪再触发，
+  避免镜像把旧数据当成最新。手工兜底时先触发同步（返回 `{"ok":true,"id":"…","state":"waiting"}`，用 id 查状态）：
 
   ```bash
+  curl -X PUT -H 'Content-Type: application/json' \
+    -d '{"tips":"release <版本号>"}' \
+    https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs
   curl https://registry.npmmirror.com/-/package/dsh-color-task-board/syncs/<id>
   ```
 
   也可以打开 <https://npmmirror.com/sync/dsh-color-task-board> 手动触发。**发布后要立刻同步一次**（不等用户反馈），
+  但若官方源刚发布还没落库，同步会拿到旧版本；等 1–3 分钟或直接交给 `npm run sync-mirror` 重试。
   同步完成的标准是镜像的 `dist-tags.latest` 和 `versions` 里出现新版本：
 
   ```bash

@@ -49,6 +49,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
+    "sync-mirror": "node scripts/sync-mirror.mjs",
     "prepublishOnly": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "smoke": "node scripts/dev/smoke-codex.mjs && node scripts/dev/smoke-automation.mjs && node scripts/dev/smoke-queue.mjs"

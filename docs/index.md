@@ -13,7 +13,7 @@ src/
 client/         浏览器半片：侧栏入口、看板面板、弹窗、拖拽换列与排序、已完成日期筛选、样式、i18n
 dist/           构建产物 dist/client.js，安装时直接使用
 locale/         插件在插件管理页里的标题与描述
-scripts/        构建脚本（esbuild 打包 client/）
+scripts/        构建脚本（esbuild 打包 client/）与发布同步脚本
 docs/           项目文档（本目录）
 cordis.patch.yml bundle patch，插入 task-board 这一行
 ```
