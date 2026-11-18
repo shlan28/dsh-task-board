@@ -13,7 +13,9 @@ git add -A && git commit -m "feat: ..."     # 2. 提交改动
 npm version patch -m "chore: release %s"    # 3. 版本号 +1 并打 tag（minor / major 同理）
 npm publish                                # 4. 发布，prepublishOnly 会再构建一次
 npm run sync-mirror                        # 5. 等官方落库并同步 npmmirror（必须，脚本会处理上游延迟）
-git push --follow-tags                     # 6. 推代码和 tag，GitHub build CI 开始跑
+git -c http.proxy=http://127.0.0.1:7890 \
+  -c https.proxy=http://127.0.0.1:7890 \
+  push origin main --follow-tags            # 6. 用本地代理推代码和 tag，GitHub build CI 开始跑
 ```
 
 ## 本地代理与缓存
@@ -53,6 +55,22 @@ SYNC_TIMEOUT_MS=600000 npm run sync-mirror   # 放宽等待上限（默认 5 分
 4. 轮询 npmmirror，直到版本出现在 `versions` 里，并打印 latest 与链接。
 
 脚本直连 registry，不读 `HTTPS_PROXY`；任何一步超时都会打印卡在哪一步并以非 0 退出。手工兜底命令见「要点」。
+
+## 推送 GitHub
+
+发布提交和 tag 用本地 ClashX 代理推送：
+
+```bash
+git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 \
+  push origin main --follow-tags
+```
+
+- 推之前先确认代理在跑：
+  `curl -x http://127.0.0.1:7890 -sS -o /dev/null -w "%{http_code}" https://github.com` 返回 200 即可。
+- `--follow-tags` 只推**注解 tag**；`npm version` 生成的 tag 带注解，能正常推。
+  手工 `git tag <版本>` 默认是轻量 tag，不会被带上，需要显式 `git push origin v0.3.0`；
+  发布时建议统一用 `git tag -a <版本> -m "chore: release <版本>"`。
+- 推完 GitHub Actions 的 build 会校验 `dist/client.js` 与 `client/` 源码一致；发布前记得把重建产物一起提交。
 
 ## 要点
 
