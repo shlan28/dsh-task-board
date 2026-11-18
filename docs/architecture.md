@@ -42,6 +42,29 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 - 面板按 `activeSpaceId` 过滤：列计数、`tags`、搜索、`全部 / 进行中 / 待验收` 筛选、「清空已完成」都只算当前空间；切换空间由 Host 落盘，所以刷新页面或多个标签页看到的当前空间一致。
 - 会话事件折叠（`applyEvent`）不分空间：卡片在别的空间里后台执行时进度照常折叠，切回去就能看到。
 
+## 空间队列
+
+- 空间对象带可选的 `queue`：启动瞬间按 `tasks` 数组顺序（面板从上到下）拍下「待办 + 无自动化 + 未在执行」
+  的卡，随后只消费这份快照；运行期间新加的待办不会自动加入。
+- `startQueue` / `stopQueue` / `queueNext` / `queueRelease` 都在 `Board` 里维护并随空间落盘；
+  `stopQueue` 只停后续派发，正在跑的卡继续跑完。
+- Host 的 `queueTick()` 逐空间推进：当前卡还在 `running` 就等；结束后成功进「待验收」的卡自动
+  `accept()` 到「已完成」，失败或被退回的卡保留原位并把原因写进 `queue.error`；然后派发下一张。
+  被删除、被挪走、被停止的卡直接跳过。
+- 触发点：`session/event` 的 `turn/end`、Codex 的 `onTaskFinished`、手动 op 之后、每 2 秒的兜底定时器
+  （`TASK_BOARD_QUEUE_TICK_MS`），以及插件启动时恢复未结束的队列。
+- 定时任务卡不进入队列：它们有自己的调度，验收后还会回到待办，混进来会互相抢跑。
+- 面板页头空间下拉右侧是队列按钮：空闲时显示可执行卡数，运行中显示进度并只停后续派发；
+  结束/停止/带错误结束用 Toast 反馈。
+
+## 已完成精简视图
+
+- 已完成卡只渲染两行：标题（单行省略）和完成时间 + 标签；仍是可点击、可拖拽的卡片。
+- 已完成列头下有日期筛选（今天 / 最近 7 天 / 最近 30 天 / 全部，默认最近 7 天），按
+  `finishedAt ?? updatedAt` 过滤，计算在 `client/done-range.js`；列计数显示筛选后的数量，
+  筛选行显示该空间已完成总数。
+- 筛选只影响展示，「清空已完成」仍清空该空间全部已完成卡。
+
 ## Codex 执行者
 
 - 卡片新增 `executor: 'dsh' | 'codex'`，默认 `dsh`；旧 `board.json`（v2）读取时补 `dsh` 并升到 v3。
@@ -80,6 +103,6 @@ Host 半片通过 `ctx.get(...)` 可选依赖宿主服务：`sessionController`�
 
 ## 数据与持久化
 
-- 卡片与空间：`$DSH_HOME/task-board/board.json`（`version: 2`，含 `spaces`、`activeSpaceId`、`tasks[].spaceId`），`Board` 类在内存里维护，`touch()` 攒 250ms 后原子写（临时文件 + rename）；卡片里的工作区字段和 `automation.targetPath` 一起持久化，旧文件缺这些字段按空处理。
+- 卡片与空间：`$DSH_HOME/task-board/board.json`（`version: 4`，含 `spaces`、`activeSpaceId`、`tasks[].spaceId`、`spaces[].queue`），`Board` 类在内存里维护，`touch()` 攒 250ms 后原子写（临时文件 + rename）；卡片里的工作区字段和 `automation.targetPath` 一起持久化，旧文件缺这些字段按空处理。
 - 自动化规则：`$DSH_HOME/storages/schedule.json`，属于 DSH 定时任务服务。
 - 工作区列表不落盘：每次 `/task-board/state` 从 `workspaceRegistry.list()` 现读，客户端把 `workspacesRevision` 算进刷新指纹。

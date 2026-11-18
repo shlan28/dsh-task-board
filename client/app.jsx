@@ -1,6 +1,7 @@
 // 任务看板主面板：页头、四列看板、卡片、新建与详情。
 import React from 'react'
 import { formatDateTime, formatRelative, getClientContext, localeId, useT } from './i18n.js'
+import { doneInRange } from './done-range.js'
 import {
   IconAgent,
   IconChat,
@@ -34,6 +35,7 @@ import {
   openSpaceDialog,
   refresh,
   selectSpace,
+  setDoneRange,
   setFilter,
   setQuery,
   setState,
@@ -52,6 +54,13 @@ const FILTERS = [
   { id: 'all', key: 'All' },
   { id: 'active', key: 'Active' },
   { id: 'review', key: 'To review' },
+]
+
+const DONE_FILTERS = [
+  { id: 'today', key: 'Today' },
+  { id: '7d', key: 'Last 7 days' },
+  { id: '30d', key: 'Last 30 days' },
+  { id: 'all', key: 'All' },
 ]
 
 const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU']
@@ -443,28 +452,51 @@ function Card({ task, t }) {
   const running = isRunning(task)
   const accent = COLUMN_META[task.column]?.accent
   const phase = phaseLabel(task, t)
+  const common = {
+    draggable: true,
+    style: { '--tb-accent': accent },
+    tabIndex: 0,
+    'aria-label': task.title,
+    onClick: () => openDetail(task.id),
+    onKeyDown: event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault()
+        openDetail(task.id)
+      }
+    },
+    onDragStart: event => {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/task-id', task.id)
+      event.currentTarget.classList.add('is-dragging')
+    },
+    onDragEnd: event => event.currentTarget.classList.remove('is-dragging'),
+  }
+  // 已完成的卡只用两行：标题；完成时间 + 标签。说明、进度和操作留给详情。
+  if (task.column === 'done') {
+    return React.createElement(
+      'article',
+      { ...common, className: 'tb-card is-compact' },
+      React.createElement(
+        'div',
+        { className: 'tb-done-line' },
+        React.createElement('span', { className: 'tb-done-dot', 'aria-hidden': 'true' }),
+        React.createElement('h3', { className: 'tb-card-title', title: task.note || task.title }, task.title),
+      ),
+      React.createElement(
+        'div',
+        { className: 'tb-done-meta' },
+        React.createElement(
+          'span',
+          { title: formatDateTime(task.finishedAt || task.updatedAt, localeId()) },
+          formatRelative(task.finishedAt || task.updatedAt, t),
+        ),
+        task.tag ? React.createElement('span', { className: 'tb-done-tag' }, `#${task.tag}`) : null,
+      ),
+    )
+  }
   return React.createElement(
     'article',
-    {
-      className: `tb-card ${running ? 'is-running' : ''}`,
-      draggable: true,
-      style: { '--tb-accent': accent },
-      tabIndex: 0,
-      'aria-label': task.title,
-      onClick: () => openDetail(task.id),
-      onKeyDown: event => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault()
-          openDetail(task.id)
-        }
-      },
-      onDragStart: event => {
-        event.dataTransfer.effectAllowed = 'move'
-        event.dataTransfer.setData('text/task-id', task.id)
-        event.currentTarget.classList.add('is-dragging')
-      },
-      onDragEnd: event => event.currentTarget.classList.remove('is-dragging'),
-    },
+    { ...common, className: `tb-card ${running ? 'is-running' : ''}` },
     React.createElement(
       'div',
       { className: 'tb-card-chips' },
@@ -558,9 +590,10 @@ function Card({ task, t }) {
   )
 }
 
-function Column({ column, tasks, total, t, spaceId }) {
+function Column({ column, tasks, total, t, spaceId, doneRange, onDoneRangeChange }) {
   const meta = COLUMN_META[column]
   const [over, setOver] = React.useState(false)
+  const count = column === 'done' ? tasks.length : total
   return React.createElement(
     'section',
     {
@@ -587,7 +620,7 @@ function Column({ column, tasks, total, t, spaceId }) {
       { className: 'tb-col-head' },
       React.createElement('span', { className: 'tb-col-dot' }),
       React.createElement('h2', null, t(meta.key)),
-      React.createElement('span', { className: 'tb-col-count' }, total),
+      React.createElement('span', { className: 'tb-col-count' }, count),
       React.createElement('span', { className: 'tb-spacer' }),
       column === 'done' && total
         ? React.createElement(IconButton, {
@@ -601,16 +634,93 @@ function Column({ column, tasks, total, t, spaceId }) {
         : null,
       React.createElement(IconButton, { icon: IconPlus, label: t('Add a task'), onClick: () => openAddDialog(column) }),
     ),
+    column === 'done'
+      ? React.createElement(
+          'div',
+          { className: 'tb-done-filter' },
+          React.createElement(
+            'select',
+            {
+              value: doneRange,
+              'aria-label': t('Filter done by date'),
+              onChange: event => onDoneRangeChange(event.target.value),
+            },
+            DONE_FILTERS.map(entry =>
+              React.createElement('option', { key: entry.id, value: entry.id }, t(entry.key)),
+            ),
+          ),
+          React.createElement('span', { className: 'tb-done-total' }, t('{n} cards', { n: total })),
+        )
+      : null,
     React.createElement(
       'div',
       { className: 'tb-col-body' },
       tasks.map(task => React.createElement(Card, { key: task.id, task, t })),
-      total === 0 ? React.createElement('div', { className: 'tb-empty' }, t('No cards yet')) : null,
+      total === 0
+        ? React.createElement('div', { className: 'tb-empty' }, t('No cards yet'))
+        : column === 'done' && tasks.length === 0
+          ? React.createElement('div', { className: 'tb-empty' }, t('No done cards match this filter'))
+          : null,
     ),
   )
 }
 
-function Header({ t, tasks, query, filter, spaces, activeSpaceId, spaceCounts }) {
+/**
+ * 空间队列按钮：空闲时按顺序执行待办；运行中显示进度并只停后续派发。
+ * 队列自然结束 / 手动停止 / 带错误结束都由 active 翻转时提示一次。
+ */
+function QueueButton({ t, space, tasks }) {
+  const queue = space?.queue
+  const active = queue?.active === true
+  const total = active ? queue.cardIds?.length || 0 : 0
+  const done = active ? Math.min(queue.index || 0, total) : 0
+  const todo = (tasks || []).filter(task => task.column === 'todo' && !task.automation && !isRunning(task))
+  const pending = (tasks || []).filter(task => task.column === 'todo' && !isRunning(task))
+  const wasActive = React.useRef(active)
+  React.useEffect(() => {
+    if (wasActive.current && !active) {
+      if (queue?.stopped) notify(t('Queue stopped; the running card finishes first'))
+      else if (queue?.error) notify(t('Queue finished, but some cards need review'), { error: true })
+      else notify(t('Queue finished'))
+    }
+    wasActive.current = active
+  }, [active, queue?.stopped, queue?.error])
+
+  const start = async () => {
+    const result = await actions.startQueue(space?.id)
+    if (result?.ok) notify(t('Queue started: {n} cards', { n: result.count }))
+  }
+  const stop = async () => {
+    await actions.stopQueue(space?.id)
+  }
+
+  return React.createElement(
+    'button',
+    {
+      type: 'button',
+      className: `tb-queue ${active ? 'is-active' : ''}`,
+      disabled: !active && !todo.length,
+      title: active
+        ? t('Stop the queue')
+        : todo.length
+          ? t('Run {n} todo cards from top to bottom; finished cards go to Done.', { n: todo.length })
+          : pending.length
+            ? t('Scheduled cards are not part of the queue.')
+            : t('Add todo cards to run them in order.'),
+      'aria-label': active ? t('Stop the queue') : t('Run todo in order'),
+      onClick: active ? stop : start,
+    },
+    active ? React.createElement('span', { className: 'tb-pulse' }) : React.createElement(IconPlay, { size: 13 }),
+    React.createElement('span', null, active ? t('Queue {done}/{total}', { done, total }) : t('Run todo in order')),
+    active
+      ? React.createElement(IconStop, { size: 13 })
+      : todo.length
+        ? React.createElement('span', { className: 'tb-queue-count' }, todo.length)
+        : null,
+  )
+}
+
+function Header({ t, tasks, query, filter, spaces, activeSpaceId, spaceCounts, activeSpace }) {
   const now = new Date()
   const locale = localeId()
   let month = ''
@@ -687,6 +797,7 @@ function Header({ t, tasks, query, filter, spaces, activeSpaceId, spaceCounts })
         ),
       ),
       React.createElement(SpaceMenu, { t, spaces, activeSpaceId, counts: spaceCounts }),
+      React.createElement(QueueButton, { key: activeSpace?.id, t, space: activeSpace, tasks }),
       React.createElement(
         'button',
         { type: 'button', className: 'tb-primary', onClick: () => openAddDialog('todo') },
@@ -1389,6 +1500,7 @@ export function BoardPanel() {
 
   const spaces = state.spaces.length ? state.spaces : [{ id: DEFAULT_SPACE_ID, name: '', order: 0 }]
   const activeSpaceId = spaces.some(space => space.id === state.activeSpaceId) ? state.activeSpaceId : spaces[0].id
+  const activeSpace = spaces.find(space => space.id === activeSpaceId) || spaces[0]
   const spaceTasks = state.tasks.filter(task => (task.spaceId || DEFAULT_SPACE_ID) === activeSpaceId)
   const spaceCounts = {}
   for (const task of state.tasks) {
@@ -1403,10 +1515,12 @@ export function BoardPanel() {
   const visible = spaceTasks.filter(task => {
     if (state.filter === 'active' && task.column !== 'doing') return false
     if (state.filter === 'review' && task.column !== 'review') return false
+    if (task.column === 'done' && !doneInRange(task, state.doneRange)) return false
     if (!query) return true
     return [task.title, task.note, task.tag, task.workspaceTitle].some(value => String(value || '').toLowerCase().includes(query))
   })
 
+  const hasNonDone = spaceTasks.some(task => task.column !== 'done')
   const dialogKind = state.dialog?.kind || 'task'
   const removeSpaceTarget = dialogKind === 'remove-space' ? spaces.find(space => space.id === state.dialog.id) : null
   const removeSpaceCount = removeSpaceTarget
@@ -1426,6 +1540,7 @@ export function BoardPanel() {
       spaces,
       activeSpaceId,
       spaceCounts,
+      activeSpace,
     }),
     state.error && !state.loaded
       ? React.createElement(
@@ -1446,10 +1561,19 @@ export function BoardPanel() {
               state.columns.map(column => {
                 const tasks = visible.filter(task => task.column === column)
                 const total = spaceTasks.filter(task => task.column === column).length
-                return React.createElement(Column, { key: column, column, tasks, total, t, spaceId: activeSpaceId })
+                return React.createElement(Column, {
+                  key: column,
+                  column,
+                  tasks,
+                  total,
+                  t,
+                  spaceId: activeSpaceId,
+                  doneRange: state.doneRange,
+                  onDoneRangeChange: setDoneRange,
+                })
               }),
             ),
-            spaceTasks.length > 0 && visible.length === 0
+            spaceTasks.length > 0 && visible.length === 0 && hasNonDone
               ? React.createElement('p', { className: 'tb-none' }, t('Nothing matches this filter.'))
               : null,
           ),

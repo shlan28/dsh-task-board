@@ -14,6 +14,7 @@ let snapshot = {
   error: null,
   filter: 'all',
   query: '',
+  doneRange: '7d',
   dialog: null,
   detailId: null,
   toast: null,
@@ -139,6 +140,8 @@ export const actions = {
   accept: id => act('accept', { id }),
   remove: id => act('remove', { id }),
   clearDone: spaceId => act('clearDone', spaceId ? { spaceId } : {}),
+  startQueue: spaceId => act('startQueue', spaceId ? { spaceId } : {}),
+  stopQueue: spaceId => act('stopQueue', spaceId ? { spaceId } : {}),
   addSpace: name => act('addSpace', { name }),
   removeSpace: id => act('removeSpace', { id }),
   selectSpace: id => act('selectSpace', { id }),
@@ -160,6 +163,11 @@ export function setFilter(filter) {
 
 export function setQuery(query) {
   setState({ query })
+}
+
+/** 已完成列的日期范围：只影响展示，不删数据。 */
+export function setDoneRange(doneRange) {
+  setState({ doneRange })
 }
 
 export function openAddDialog(column = 'todo') {

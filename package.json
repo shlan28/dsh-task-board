@@ -51,7 +51,7 @@
     "watch": "node scripts/build.mjs --watch",
     "prepublishOnly": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
-    "smoke": "node scripts/dev/smoke-codex.mjs && node scripts/dev/smoke-automation.mjs"
+    "smoke": "node scripts/dev/smoke-codex.mjs && node scripts/dev/smoke-automation.mjs && node scripts/dev/smoke-queue.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

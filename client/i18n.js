@@ -192,6 +192,21 @@ const zh = {
   'Codex run': 'Codex 运行',
   'No Codex run yet.': '还没有 Codex 运行。',
   'Codex starts in this workspace when you run the card.': '开始执行时会在选中的工作区里调用 Codex。',
+  'Today': '今天',
+  'Last 7 days': '最近 7 天',
+  'Last 30 days': '最近 30 天',
+  'Filter done by date': '按完成日期筛选',
+  'No done cards match this filter': '没有符合筛选的已完成卡片',
+  'Run todo in order': '按顺序执行待办',
+  'Stop the queue': '停止队列',
+  'Queue {done}/{total}': '执行中 {done}/{total}',
+  'Run {n} todo cards from top to bottom; finished cards go to Done.': '按从上到下的顺序执行 {n} 张待办卡，成功的卡自动进入已完成。',
+  'Add todo cards to run them in order.': '待办里有卡片后就能按顺序执行。',
+  'Scheduled cards are not part of the queue.': '定时任务卡不进入队列，由各自的定时规则执行。',
+  'Queue started: {n} cards': '已开始执行 {n} 张待办卡',
+  'Queue stopped; the running card finishes first': '队列已停止，正在执行的卡会跑完',
+  'Queue finished': '队列执行完毕',
+  'Queue finished, but some cards need review': '队列执行完毕，但有卡片没跑成功，留在待验收',
 }
 
 const en = {
@@ -383,6 +398,21 @@ const en = {
   'Codex run': 'Codex run',
   'No Codex run yet.': 'No Codex run yet.',
   'Codex starts in this workspace when you run the card.': 'Codex starts in this workspace when you run the card.',
+  'Today': 'Today',
+  'Last 7 days': 'Last 7 days',
+  'Last 30 days': 'Last 30 days',
+  'Filter done by date': 'Filter done by date',
+  'No done cards match this filter': 'No done cards match this filter',
+  'Run todo in order': 'Run todo in order',
+  'Stop the queue': 'Stop the queue',
+  'Queue {done}/{total}': 'Queue {done}/{total}',
+  'Run {n} todo cards from top to bottom; finished cards go to Done.': 'Run {n} todo cards from top to bottom; finished cards go to Done.',
+  'Add todo cards to run them in order.': 'Add todo cards to run them in order.',
+  'Scheduled cards are not part of the queue.': 'Scheduled cards are not part of the queue.',
+  'Queue started: {n} cards': 'Queue started: {n} cards',
+  'Queue stopped; the running card finishes first': 'Queue stopped; the running card finishes first',
+  'Queue finished': 'Queue finished',
+  'Queue finished, but some cards need review': 'Queue finished, but some cards need review',
 }
 
 let appCtx = null

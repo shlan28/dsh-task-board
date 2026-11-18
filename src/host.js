@@ -149,6 +149,7 @@ export function apply(ctx) {
   const board = new Board(join(dshHome(), 'task-board'), { log: (...args) => ctx.logger?.warn?.(...args) })
   const log = (...args) => ctx.logger?.warn?.(...args)
   let ticking = false
+  let queueBusy = false
 
   const boardRoot = join(dshHome(), 'task-board')
   const codex = new CodexAgent({
@@ -157,6 +158,9 @@ export function apply(ctx) {
     board,
     buildPrompt: task => buildPrompt(task),
     workDirFor: task => workspaceOf(task)?.path || boardDirectory(),
+    onTaskFinished: () => {
+      void queueTick()
+    },
   })
   const ready = Promise.all([board.load(), codex.load()]).then(() => undefined)
   const inflight = new Set()
@@ -772,6 +776,58 @@ export function apply(ctx) {
     }
   }
 
+  /**
+   * 空间队列：逐张派发待办卡。成功的卡自动验收进「已完成」，失败的卡留在「待验收」并记一条错误。
+   * 当前卡还在跑就等下一轮；卡被删除、挪走或用户停止后直接跳到下一张。
+   */
+  async function queueTick() {
+    if (queueBusy) return
+    queueBusy = true
+    try {
+      await ready
+      for (const space of [...board.spaces]) {
+        if (!space.queue?.active) continue
+        let queue = board.spaces.find(entry => entry.id === space.id)?.queue
+        if (queue?.currentId) {
+          const current = board.find(queue.currentId)
+          if (current?.running) continue
+          if (current) {
+            const failed = Boolean(current.error) || current.phase === 'error'
+            if (current.column === 'review' && !failed) {
+              board.accept(current.id)
+            } else if (failed) {
+              board.queueRelease(space.id, {
+                error: `「${current.title}」没有完成：${current.error || '执行出错'}`,
+              })
+            }
+          }
+          // accept 之后 currentId 还在；删除/挪走/失败也走这里统一释放。
+          if (board.spaces.find(entry => entry.id === space.id)?.queue?.currentId) board.queueRelease(space.id)
+          await board.flushNow()
+        }
+        while (true) {
+          queue = board.spaces.find(entry => entry.id === space.id)?.queue
+          if (!queue?.active) break
+          const task = board.queueNext(space.id)
+          if (!task) break
+          const result = await dispatch(task)
+          if (!result.ok) {
+            board.queueRelease(space.id, { error: `「${task.title}」没有启动：${result.error}` })
+            await board.flushNow()
+            continue
+          }
+          await board.flushNow()
+          break
+        }
+        await board.flushNow()
+      }
+    } catch (error) {
+      log('task-board: 空间队列推进失败', error)
+    } finally {
+      queueBusy = false
+    }
+  }
+
   /** 启动时接管：子进程已不在的 Codex 卡标成中断，再开始检测与调度。 */
   async function bootCodex() {
     await ready
@@ -785,6 +841,7 @@ export function apply(ctx) {
     if (changed) await board.flushNow()
     codex.detect({ force: true }).catch(error => log('task-board: Codex 检测失败', error))
     await automationTick()
+    void queueTick()
   }
 
   const agentSnapshot = () => ({ status: codex.statusSnapshot(), config: codex.configSnapshot() })
@@ -842,6 +899,7 @@ export function apply(ctx) {
         if (!sessionId || !event) return
         const changed = board.applyEvent(String(sessionId), event)
         if (!changed.length) return
+        if (event.type === 'turn/end') void queueTick()
         if (event.type === 'turn/end' || event.type === 'assistant/message') board.flush()
       }),
     'task-board: session progress',
@@ -946,6 +1004,7 @@ export function apply(ctx) {
         if (!task) return fail('任务不存在或状态无效')
         const warning = await syncAutomationByColumn(task)
         await board.flushNow()
+        void queueTick()
         return { ...done(task), ...(warning ? { warning } : {}), state: await snapshot() }
       }
       case 'remove': {
@@ -958,12 +1017,14 @@ export function apply(ctx) {
         }
         board.remove(id)
         await board.flushNow()
+        void queueTick()
         return { ok: true, state: await snapshot() }
       }
       case 'accept': {
         const task = board.accept(id)
         if (!task) return fail('任务不存在')
         await board.flushNow()
+        void queueTick()
         return { ...done(task), state: await snapshot() }
       }
       case 'clearDone': {
@@ -991,13 +1052,32 @@ export function apply(ctx) {
         await board.flushNow()
         return { ok: true, space: { ...space }, state: await snapshot() }
       }
+      case 'startQueue': {
+        const space = spaceBy(body.spaceId)
+        if (!space) return fail('空间不存在')
+        const result = board.startQueue(space.id)
+        if (!result.ok) return fail(result.error)
+        await board.flushNow()
+        void queueTick()
+        return { ok: true, count: result.count, state: await snapshot() }
+      }
+      case 'stopQueue': {
+        const space = spaceBy(body.spaceId)
+        if (!space) return fail('空间不存在')
+        const result = board.stopQueue(space.id)
+        if (!result.ok) return fail(result.error)
+        await board.flushNow()
+        return { ok: true, state: await snapshot() }
+      }
       case 'dispatch': {
         const task = board.find(id)
         const result = await runNow(task)
+        void queueTick()
         return { ...result, state: await snapshot() }
       }
       case 'stop': {
         const result = await stop(board.find(id))
+        void queueTick()
         return { ...result, state: await snapshot() }
       }
       case 'agentDetect': {
@@ -1250,9 +1330,16 @@ export function apply(ctx) {
       void automationTick()
     }, tickMs)
     timer.unref?.()
+    // 空间队列的兜底推进：事件与结束回调已经覆盖大多数情况，这里防漏。
+    const queueMs = Math.max(250, Number(process.env.TASK_BOARD_QUEUE_TICK_MS) || 2_000)
+    const queueTimer = setInterval(() => {
+      if (board.spaces.some(space => space.queue?.active)) void queueTick()
+    }, queueMs)
+    queueTimer.unref?.()
     void bootCodex()
     return () => {
       clearInterval(timer)
+      clearInterval(queueTimer)
       void codex.dispose()
     }
   }, 'task-board: codex runtime')

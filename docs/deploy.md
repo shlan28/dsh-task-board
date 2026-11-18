@@ -75,7 +75,7 @@ node scripts/build.mjs
 
 | 数据 | 位置 | 说明 |
 |---|---|---|
-| 看板卡片与空间 | `$DSH_HOME/task-board/board.json` | 普通 JSON（`version: 3`，含 `spaces` / `activeSpaceId` / 卡片 `spaceId` / `executor` / Codex 运行信息），插件自己读写；原子写入（临时文件 + rename）；旧格式会自动迁移 |
+| 看板卡片与空间 | `$DSH_HOME/task-board/board.json` | 普通 JSON（`version: 4`，含 `spaces` / `activeSpaceId` / 空间 `queue` / 卡片 `spaceId` / `executor` / Codex 运行信息），插件自己读写；原子写入（临时文件 + rename）；旧格式会自动迁移 |
 | Codex 运行配置 | `$DSH_HOME/task-board/agent.json` | 代码路径、适配器命令、默认模型、运行权限、自动确认；不存密钥，权限 `600` |
 | DSH 卡自动化规则 | `$DSH_HOME/storages/schedule.json` | 由 DSH 内置定时任务服务持有，卡片里只存任务 id、规则和预留会话 |
 | Codex 卡自动化规则 | `$DSH_HOME/task-board/board.json` | 存在卡片的 `automation` 里（`engine: board`），由插件按 `nextAt` 触发 |

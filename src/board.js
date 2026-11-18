@@ -10,7 +10,7 @@ export const DEFAULT_SPACE_ID = 'default'
 const DEFAULT_SPACE_NAMES = ['默认空间', 'default space']
 const WEEKDAY_SET = new Set(WEEKDAYS)
 const AUTOMATION_FREQUENCIES = new Set(['hourly', 'daily', 'weekly', 'custom'])
-const FILE_VERSION = 3
+const FILE_VERSION = 4
 export const EXECUTORS = new Set(['dsh', 'codex'])
 
 const clampProgress = (value) => {
@@ -72,8 +72,25 @@ export function normalizeCodex(raw) {
   }
 }
 
+/** 空间的执行队列：启动瞬间的待办快照 + 当前进度，跟着空间一起落盘。 */
+export function normalizeQueue(raw) {
+  if (!raw || typeof raw !== 'object') return null
+  const cardIds = Array.isArray(raw.cardIds) ? raw.cardIds.filter(id => typeof id === 'string' && id) : []
+  const index = Number.isFinite(raw.index) ? Math.max(0, Math.min(cardIds.length, Number(raw.index))) : 0
+  return {
+    active: raw.active === true,
+    cardIds,
+    index,
+    currentId: typeof raw.currentId === 'string' && raw.currentId ? raw.currentId : null,
+    startedAt: Number(raw.startedAt) || null,
+    finishedAt: Number(raw.finishedAt) || null,
+    stopped: raw.stopped === true,
+    error: text(raw.error, 500),
+  }
+}
+
 function defaultSpace() {
-  return { id: DEFAULT_SPACE_ID, name: '', order: 0, createdAt: Date.now() }
+  return { id: DEFAULT_SPACE_ID, name: '', order: 0, createdAt: Date.now(), queue: null }
 }
 
 /** 空间的展示名：默认空间没有名字，由界面按语言补；这里只保留数据。 */
@@ -85,6 +102,7 @@ export function normalizeSpace(raw, order = 0) {
     name: id === DEFAULT_SPACE_ID ? '' : text(raw?.name, 60),
     order: Number.isFinite(raw?.order) ? Number(raw.order) : order,
     createdAt: Number(raw?.createdAt) || Date.now(),
+    queue: normalizeQueue(raw?.queue),
   }
 }
 
@@ -202,7 +220,10 @@ export class Board {
         ...task,
         automation: task.automation ? { ...task.automation, weekdays: [...task.automation.weekdays] } : null,
       })),
-      spaces: this.spaces.map(space => ({ ...space })),
+      spaces: this.spaces.map(space => ({
+        ...space,
+        queue: space.queue ? { ...space.queue, cardIds: [...space.queue.cardIds] } : null,
+      })),
       activeSpaceId: this.activeSpaceId,
       revision: this.revision,
       columns: [...COLUMNS],
@@ -239,7 +260,7 @@ export class Board {
       return { ok: false, error: `已有同名空间：${value}` }
     }
     const order = this.spaces.reduce((max, space) => Math.max(max, space.order), 0) + 1
-    const space = { id: newId('s'), name: value, order, createdAt: this.now() }
+    const space = { id: newId('s'), name: value, order, createdAt: this.now(), queue: null }
     this.spaces.push(space)
     this.activeSpaceId = space.id
     this.touch()
@@ -268,6 +289,79 @@ export class Board {
     this.activeSpaceId = space.id
     this.touch()
     return space
+  }
+
+  /**
+   * 启动空间队列：把此刻待办里、没有自动化、没在执行的卡按当前顺序拍成快照。
+   * 运行期间新加的卡不会自动加入，避免队列被不断延长。
+   */
+  startQueue(spaceId) {
+    const space = this.spaces.find(entry => entry.id === spaceId)
+    if (!space) return { ok: false, error: '空间不存在' }
+    if (space.queue?.active) return { ok: false, error: '这个空间已经在按顺序执行' }
+    const cards = this.tasks.filter(
+      task => task.spaceId === space.id && task.column === 'todo' && !task.automation && !task.running,
+    )
+    if (!cards.length) return { ok: false, error: '待办里没有可执行的卡片' }
+    space.queue = {
+      active: true,
+      cardIds: cards.map(task => task.id),
+      index: 0,
+      currentId: null,
+      startedAt: this.now(),
+      finishedAt: null,
+      stopped: false,
+      error: '',
+    }
+    this.touch()
+    return { ok: true, count: cards.length, space }
+  }
+
+  /** 停止队列：只停后续派发，正在跑的卡让它跑完（卡上仍可单独停止）。 */
+  stopQueue(spaceId) {
+    const space = this.spaces.find(entry => entry.id === spaceId)
+    if (!space) return { ok: false, error: '空间不存在' }
+    if (!space.queue?.active) return { ok: false, error: '这个空间没有正在执行的队列' }
+    space.queue.active = false
+    space.queue.stopped = true
+    space.queue.currentId = null
+    space.queue.finishedAt = this.now()
+    this.touch()
+    return { ok: true, space }
+  }
+
+  /**
+   * 取队列里下一张可执行的卡并记为当前卡。
+   * 被删除、已经不在待办或正在执行的卡直接跳过；全部考察完就地结束队列。
+   */
+  queueNext(spaceId) {
+    const space = this.spaces.find(entry => entry.id === spaceId)
+    const queue = space?.queue
+    if (!queue?.active) return null
+    while (queue.index < queue.cardIds.length) {
+      const id = queue.cardIds[queue.index]
+      queue.index += 1
+      const task = this.find(id)
+      if (!task || task.column !== 'todo' || task.running) continue
+      queue.currentId = id
+      this.touch()
+      return task
+    }
+    queue.active = false
+    queue.currentId = null
+    queue.finishedAt = this.now()
+    this.touch()
+    return null
+  }
+
+  /** 当前卡处理完了：清空 currentId，必要时记一条失败说明。 */
+  queueRelease(spaceId, patch = {}) {
+    const queue = this.spaces.find(entry => entry.id === spaceId)?.queue
+    if (!queue) return null
+    queue.currentId = null
+    if (typeof patch.error === 'string') queue.error = text(patch.error, 500)
+    this.touch()
+    return queue
   }
 
   bySession(sessionId) {

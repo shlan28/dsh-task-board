@@ -142,6 +142,7 @@ export class CodexAgent {
     this.board = options.board || null
     this.buildPrompt = options.buildPrompt || (() => '')
     this.workDirFor = options.workDirFor || (() => process.cwd())
+    this.onTaskFinished = options.onTaskFinished || null
     this.config = normalizeConfig(null)
     this.status = { state: 'unknown', message: '尚未检测', checkedAt: 0, codex: null, adapter: null, models: [] }
     this.detecting = null
@@ -410,6 +411,11 @@ export class CodexAgent {
       await run.connection?.close().catch(() => {})
       this.active.delete(task.id)
       this.drain()
+      try {
+        this.onTaskFinished?.(task.id)
+      } catch (error) {
+        this.log('task-board: 结束回调失败', error)
+      }
     }
   }
 
