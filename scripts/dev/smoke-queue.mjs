@@ -106,6 +106,14 @@ try {
     added.push(result.task)
   }
 
+  const reordered = await call('POST', '/task-board/op', {
+    op: 'reorder',
+    id: added[2].id,
+    targetId: added[0].id,
+    position: 'before',
+  })
+  assert(reordered.ok === true, '卡片顺序已调整为 third → first → second')
+
   const started = await call('POST', '/task-board/op', { op: 'startQueue', spaceId: 'default' })
   assert(started.ok === true, '队列已启动')
   assert(started.count === 3, '队列包含 3 张待办卡')
@@ -127,8 +135,8 @@ try {
   assert(third?.column === 'done', '失败后队列继续执行下一张')
   assert(prompts.length === 3, `每张卡只派发一次（实际 ${prompts.length} 次）`)
   assert(
-    prompts[0]?.text.includes('任务：first') && prompts[1]?.text.includes('任务：second') && prompts[2]?.text.includes('任务：third'),
-    '派发顺序与待办顺序一致',
+    prompts[0]?.text.includes('任务：third') && prompts[1]?.text.includes('任务：first') && prompts[2]?.text.includes('任务：second'),
+    '派发顺序与调整后的待办顺序一致',
   )
 
   const queue = current.spaces.find(space => space.id === 'default')?.queue

@@ -440,6 +440,33 @@ export class Board {
     return task
   }
 
+  /**
+   * 同一列内调整卡片顺序：把 id 放到 targetId 前/后，targetId 为空表示放到该列末尾。
+   * 面板按 tasks 数组顺序渲染，所以这里调整数组，并把 order 重新编号保持一致。
+   */
+  reorder(id, targetId = null, position = 'before') {
+    const task = this.find(id)
+    if (!task) return { ok: false, error: '任务不存在' }
+    if (targetId && targetId === id) return { ok: true, task }
+    const target = targetId ? this.find(targetId) : null
+    if (targetId && !target) return { ok: false, error: '目标任务不存在' }
+    if (target && target.column !== task.column) return { ok: false, error: '只能在同一列里调整顺序' }
+    const from = this.tasks.indexOf(task)
+    this.tasks.splice(from, 1)
+    if (target) {
+      const to = this.tasks.indexOf(target) + (position === 'after' ? 1 : 0)
+      this.tasks.splice(to, 0, task)
+    } else {
+      this.tasks.push(task)
+    }
+    this.tasks.forEach((entry, index) => {
+      entry.order = index + 1
+    })
+    task.updatedAt = this.now()
+    this.touch()
+    return { ok: true, task }
+  }
+
   applyColumn(task, column) {
     task.column = column
     if (column === 'done') {

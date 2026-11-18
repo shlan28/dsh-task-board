@@ -1007,6 +1007,16 @@ export function apply(ctx) {
         void queueTick()
         return { ...done(task), ...(warning ? { warning } : {}), state: await snapshot() }
       }
+      case 'reorder': {
+        const result = board.reorder(
+          id,
+          typeof body?.targetId === 'string' && body.targetId ? body.targetId : null,
+          body?.position === 'after' ? 'after' : 'before',
+        )
+        if (!result.ok) return fail(result.error)
+        await board.flushNow()
+        return { ...done(result.task), state: await snapshot() }
+      }
       case 'remove': {
         const task = board.find(id)
         if (!task) return fail('任务不存在')

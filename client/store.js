@@ -135,6 +135,7 @@ export const actions = {
   add: payload => act('add', payload),
   update: (id, patch) => act('update', { id, ...patch }),
   move: (id, column) => act('move', { id, column }),
+  reorder: (id, targetId, position = 'before') => act('reorder', { id, targetId: targetId || null, position }),
   dispatch: id => act('dispatch', { id }),
   stop: id => act('stop', { id }),
   accept: id => act('accept', { id }),

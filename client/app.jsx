@@ -448,10 +448,22 @@ export function openSessionById(sessionId) {
   }
 }
 
+/** 指针落在卡片上半还是下半，决定插到前面还是后面。 */
+function dropSideOf(event, element) {
+  const rect = element.getBoundingClientRect()
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
+}
+
 function Card({ task, t }) {
   const running = isRunning(task)
   const accent = COLUMN_META[task.column]?.accent
   const phase = phaseLabel(task, t)
+  const boardState = useBoardState()
+  const [dropSide, setDropSide] = React.useState(null)
+  // 拖拽结束（包括在窗口外松手）时清掉残留的插入提示。
+  React.useEffect(() => {
+    if (!boardState.dragging) setDropSide(null)
+  }, [boardState.dragging])
   const common = {
     draggable: true,
     style: { '--tb-accent': accent },
@@ -468,14 +480,43 @@ function Card({ task, t }) {
       event.dataTransfer.effectAllowed = 'move'
       event.dataTransfer.setData('text/task-id', task.id)
       event.currentTarget.classList.add('is-dragging')
+      setState({ dragging: task.id })
     },
-    onDragEnd: event => event.currentTarget.classList.remove('is-dragging'),
+    onDragEnd: event => {
+      event.currentTarget.classList.remove('is-dragging')
+      setState({ dragging: null })
+    },
+    onDragOver: event => {
+      const dragged = boardState.dragging
+      if (!dragged || dragged === task.id) return
+      const source = boardState.tasks.find(entry => entry.id === dragged)
+      if (!source || source.column !== task.column) return // 换列交给整列处理
+      event.preventDefault()
+      event.stopPropagation()
+      event.dataTransfer.dropEffect = 'move'
+      const side = dropSideOf(event, event.currentTarget)
+      if (side !== dropSide) setDropSide(side)
+    },
+    onDragLeave: event => {
+      if (!event.currentTarget.contains(event.relatedTarget)) setDropSide(null)
+    },
+    onDrop: event => {
+      const dragged = boardState.dragging
+      if (!dragged || dragged === task.id) return
+      const source = boardState.tasks.find(entry => entry.id === dragged)
+      if (!source || source.column !== task.column) return
+      event.preventDefault()
+      event.stopPropagation()
+      setDropSide(null)
+      actions.reorder(dragged, task.id, dropSideOf(event, event.currentTarget))
+    },
   }
+  const dropClass = dropSide ? ` is-drop-${dropSide}` : ''
   // 已完成的卡只用两行：标题；完成时间 + 标签。说明、进度和操作留给详情。
   if (task.column === 'done') {
     return React.createElement(
       'article',
-      { ...common, className: 'tb-card is-compact' },
+      { ...common, className: `tb-card is-compact${dropClass}` },
       React.createElement(
         'div',
         { className: 'tb-done-line' },
@@ -496,7 +537,7 @@ function Card({ task, t }) {
   }
   return React.createElement(
     'article',
-    { ...common, className: `tb-card ${running ? 'is-running' : ''}` },
+    { ...common, className: `tb-card ${running ? 'is-running' : ''}${dropClass}` },
     React.createElement(
       'div',
       { className: 'tb-card-chips' },
@@ -612,7 +653,10 @@ function Column({ column, tasks, total, t, spaceId, doneRange, onDoneRangeChange
         event.preventDefault()
         setOver(false)
         const id = event.dataTransfer.getData('text/task-id')
-        if (id) actions.move(id, column)
+        if (!id) return
+        // 落在列尾空白处：同列拖拽排到该列最后，跨列拖拽照旧换列。
+        if (tasks.some(task => task.id === id)) actions.reorder(id, null)
+        else actions.move(id, column)
       },
     },
     React.createElement(

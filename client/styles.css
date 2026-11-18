@@ -800,3 +800,19 @@
 }
 .tb-done-filter select:focus { border-color: color-mix(in srgb, var(--tb-brand) 55%, var(--tb-line)); }
 .tb-done-total { margin-left: auto; color: color-mix(in srgb, var(--tb-ink2) 82%, transparent); font-size: 10.5px; white-space: nowrap; }
+
+/* 卡片上下排序：拖到卡片上半/下半时显示插入线 */
+.tb-card.is-drop-before::before,
+.tb-card.is-drop-after::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--tb-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--tb-accent) 18%, transparent);
+  pointer-events: none;
+}
+.tb-card.is-drop-before::before { top: -5px; }
+.tb-card.is-drop-after::after { bottom: -5px; }
